@@ -1,0 +1,22 @@
+# Cargo / Rust
+target/
+
+# OS Build & Images
+*.iso
+*.img
+*.bin
+*.elf
+*.o
+
+# Limine & Firmware assets
+limine/
+ovmf/
+OVMF*
+
+*.md
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*~
