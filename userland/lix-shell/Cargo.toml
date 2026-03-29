@@ -1,0 +1,9 @@
+[package]
+name = "lix-shell"
+version = "0.0.1"
+edition = "2021"
+description = "Desktop shell for LixOS (panel, launcher, notifications)"
+
+[dependencies]
+lix-sys = { path = "../../libs/lix-sys" }
+lix-ui = { path = "../../libs/lix-ui" }

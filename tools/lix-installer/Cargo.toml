@@ -1,0 +1,7 @@
+[package]
+name = "lix-installer"
+version = "0.0.1"
+edition = "2021"
+description = "Transactional non-destructive installer for LixOS"
+
+[dependencies]

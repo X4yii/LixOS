@@ -1,0 +1,8 @@
+[package]
+name = "vanish"
+version = "0.0.1"
+edition = "2021"
+description = "Official shell and scripting environment for LixOS"
+
+[dependencies]
+lix-sys = { path = "../../libs/lix-sys" }

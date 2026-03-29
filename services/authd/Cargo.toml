@@ -1,0 +1,8 @@
+[package]
+name = "authd"
+version = "0.0.1"
+edition = "2021"
+description = "Authentication daemon and capability delegator for LixOS"
+
+[dependencies]
+lix-sys = { path = "../../libs/lix-sys" }

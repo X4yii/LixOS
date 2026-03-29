@@ -1,0 +1,7 @@
+[package]
+name = "lix-mkiso"
+version = "0.0.1"
+edition = "2021"
+description = "Hybrid UEFI LiveISO builder for LixOS"
+
+[dependencies]

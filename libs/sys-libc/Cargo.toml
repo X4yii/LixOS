@@ -1,0 +1,8 @@
+[package]
+name = "sys-libc"
+version = "0.0.1"
+edition = "2021"
+description = "C/POSIX compatibility layer built in Rust for LixOS"
+
+[dependencies]
+lix-sys = { path = "../lix-sys" }

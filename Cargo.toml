@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "xtask",
+    "kernel",
+    "libs/lix-sys",
+    "libs/sys-libc",
+    "libs/lix-ui",
+    "services/authd",
+    "services/lix-compositor",
+    "userland/vanish",
+    "userland/lix-shell",
+    "pkg/pml",
+    "tools/lix-installer",
+    "tools/lix-mkiso",
+]
+
+[profile.dev]
+opt-level = 1
+debug = true
+overflow-checks = true
+panic = "abort"
+
+[profile.release]
+opt-level = 3
+debug = true
+lto = "fat"
+codegen-units = 1
+panic = "abort"
