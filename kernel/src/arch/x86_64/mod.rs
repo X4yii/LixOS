@@ -1,11 +1,19 @@
 pub mod io;
+pub mod gdt;
+pub mod idt;
+pub mod pic;
+pub mod apic;
 
-/// Detiene la CPU indefinidamente en un bucle seguro.
-#[inline(always)]
+pub fn init() {
+    gdt::init();
+    idt::init();
+    pic::init();
+    unsafe { apic::init(); }
+    x86_64::instructions::interrupts::enable();
+}
+
 pub fn halt_loop() -> ! {
     loop {
-        unsafe {
-            core::arch::asm!("cli; hlt", options(nomem, nostack));
-        }
+        x86_64::instructions::hlt();
     }
 }

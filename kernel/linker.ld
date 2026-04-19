@@ -25,17 +25,15 @@ SECTIONS
         *(.rodata .rodata.*)
     } :rodata
 
-    /* Sección de solicitudes del protocolo Limine */
-    .requests : {
-        KEEP(*(.requests_start_marker))
-        KEEP(*(.requests))
-        KEEP(*(.requests_end_marker))
-    } :rodata
-
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
     .data : {
         *(.data .data.*)
+
+        /* Sección de solicitudes del protocolo Limine (debe ser RW para recibir respuestas) */
+        KEEP(*(.requests_start_marker))
+        KEEP(*(.requests))
+        KEEP(*(.requests_end_marker))
     } :data
 
     .bss : {
