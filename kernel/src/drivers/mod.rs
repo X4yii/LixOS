@@ -1,1 +1,8 @@
+pub mod font;
+pub mod framebuffer;
 pub mod serial;
+pub mod ps2_keyboard;
+pub mod tty;
+pub mod pci;
+pub mod ahci;
+pub mod block;
