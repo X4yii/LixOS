@@ -1,12 +1,9 @@
-# LixOS: Especificación Canónica del ABI de Syscalls (ADR-24)
-# Fuente de verdad única para generadores de código y verificación.
 
 [abi]
 version = "0.1.0"
 arch = "x86_64"
 calling_convention = "sysv_registers"
 
-# 0x00xx: Núcleo (Handles, espera y revocación)
 [[syscall]]
 id = 0x000
 name = "sys_abi_version"
@@ -42,7 +39,6 @@ description = "Invalida todos los handles y memoria virtual ligados al revoker"
 args = [{ name = "rev_handle", type = "u64" }]
 rights = "NONE"
 
-# 0x01xx: Procesos, hilos y Jobs
 [[syscall]]
 id = 0x100
 name = "sys_process_spawn"
@@ -57,7 +53,6 @@ description = "Termina el proceso actual con código de estado"
 args = [{ name = "code", type = "i32" }]
 rights = "NONE"
 
-# 0x02xx: Memoria Virtual
 [[syscall]]
 id = 0x200
 name = "sys_vmo_create"
@@ -78,7 +73,6 @@ args = [
 ]
 rights = "MAP"
 
-# 0x07xx: Gráficos y Pantalla
 [[syscall]]
 id = 0x700
 name = "sys_display_info"
@@ -98,7 +92,6 @@ args = [
 ]
 rights = "DISPLAY_OWN"
 
-# 0x08xx: Sistema
 [[syscall]]
 id = 0x801
 name = "sys_log_write"
