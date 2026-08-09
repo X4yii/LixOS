@@ -1,0 +1,9 @@
+[package]
+name = "ltop"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sys-libc = { path = "../../libs/sys-libc" }
+litui = { path = "../../libs/litui/litui", default-features = false }
+linked_list_allocator = "0.10.5"

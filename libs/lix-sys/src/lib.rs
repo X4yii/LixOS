@@ -1,13 +1,5 @@
-//! # lix-sys
-//!
-//! Definiciones nativas del ABI de LixOS: tipos de Handle, máscaras de derechos,
-//! códigos de error y números de syscall canónicos.
-
 #![no_std]
 
-/// Identificador de Handle de 64 bits [generación: 32 bits | índice: 32 bits].
-/// La generación previene Use-After-Free tras reutilizaciones de slots.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Handle(pub u64);
 
@@ -35,8 +27,6 @@ impl Handle {
     }
 }
 
-/// Máscara de derechos atenuables asociados a un Handle (32 bits).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Rights(pub u32);
 
@@ -79,8 +69,6 @@ impl Rights {
     }
 }
 
-/// Códigos de error estándar compatibles con Linux LP64 y específicos de LixOS.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
 #[repr(i32)]
 pub enum ErrorCode {
@@ -107,9 +95,6 @@ pub enum ErrorCode {
     ELIX_PEER_CLOSED = 1003,
 }
 
-/// Números canónicos de syscalls en LixOS (convención System V rax).
-pub mod syscall {
-    // Núcleo: Handles y espera (0x00xx)
     pub const SYS_ABI_VERSION: usize = 0x000;
     pub const SYS_HANDLE_CLOSE: usize = 0x001;
     pub const SYS_HANDLE_DUP: usize = 0x002;
@@ -121,7 +106,6 @@ pub mod syscall {
     pub const SYS_REVOKER_REVOKE: usize = 0x008;
     pub const SYS_HANDLE_DUP_REVOCABLE: usize = 0x009;
 
-    // Procesos, hilos y Jobs (0x01xx)
     pub const SYS_PROCESS_SPAWN: usize = 0x100;
     pub const SYS_PROCESS_EXIT: usize = 0x101;
     pub const SYS_PROCESS_KILL: usize = 0x102;
@@ -132,7 +116,6 @@ pub mod syscall {
     pub const SYS_JOB_CREATE: usize = 0x108;
     pub const SYS_JOB_KILL: usize = 0x109;
 
-    // Memoria virtual (0x02xx)
     pub const SYS_VMO_CREATE: usize = 0x200;
     pub const SYS_VMO_RESIZE: usize = 0x201;
     pub const SYS_VM_MAP: usize = 0x202;
@@ -140,7 +123,6 @@ pub mod syscall {
     pub const SYS_VM_PROTECT: usize = 0x204;
     pub const SYS_VM_INFO: usize = 0x205;
 
-    // Archivos y Namespaces (0x03xx)
     pub const SYS_OPEN_AT: usize = 0x300;
     pub const SYS_READ: usize = 0x301;
     pub const SYS_WRITE: usize = 0x302;
@@ -149,14 +131,11 @@ pub mod syscall {
     pub const SYS_NAMESPACE_CREATE: usize = 0x313;
     pub const SYS_NAMESPACE_BIND: usize = 0x314;
 
-    // Gráficos y Pantalla (0x07xx)
     pub const SYS_DISPLAY_INFO: usize = 0x700;
     pub const SYS_DISPLAY_ACQUIRE: usize = 0x701;
     pub const SYS_DISPLAY_PRESENT: usize = 0x702;
     pub const SYS_INPUT_OPEN: usize = 0x705;
 
-    // Sistema (0x08xx)
     pub const SYS_SYSTEM_INFO: usize = 0x800;
     pub const SYS_LOG_WRITE: usize = 0x801;
     pub const SYS_POWER: usize = 0x803;
-}

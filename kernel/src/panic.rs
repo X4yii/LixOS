@@ -1,10 +1,20 @@
-//! # Manejador de Pánico Determinista
-
 use core::panic::PanicInfo;
 use crate::arch::x86_64::halt_loop;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    unsafe {
+        core::arch::asm!("cli", options(nomem, nostack));
+    }
+
+    unsafe {
+        crate::klog::force_unlock();
+    }
+
+    unsafe {
+        crate::drivers::framebuffer::emergency_panic_screen();
+    }
+
     kprintln!("\n========================================");
     kprintln!("          LIXOS KERNEL PANIC            ");
     kprintln!("========================================");

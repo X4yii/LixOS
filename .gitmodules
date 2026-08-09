@@ -1,0 +1,3 @@
+[submodule "libs/litui"]
+	path = libs/litui
+	url = https://github.com/X4yii/Litui.git
