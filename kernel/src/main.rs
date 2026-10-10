@@ -1,6 +1,5 @@
 #![no_std]
 #![cfg_attr(not(test), no_main)]
-#![feature(abi_x86_interrupt)]
 
 extern crate alloc;
 

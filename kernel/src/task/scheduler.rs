@@ -190,12 +190,10 @@ pub fn schedule_on_cpu(cpu_id: usize, current_sp: u64, timer_tick: bool) -> u64 
         }
     }
 
-    wake_reaper_if_needed();
-
     if let Some(mut current_proc) = rq.current.take() {
         current_proc.stack_pointer = current_sp;
 
-        if (current_proc.pending_signals & ((1 << 15) | (1 << 2))) != 0 {
+        if (current_proc.pending_signals & ((1 << 15) | (1 << 2) | (1 << 9))) != 0 {
             current_proc.state = ProcessState::Dead;
         }
 
@@ -209,6 +207,14 @@ pub fn schedule_on_cpu(cpu_id: usize, current_sp: u64, timer_tick: bool) -> u64 
         match current_proc.state {
             ProcessState::Dead => {
                 ZOMBIES.lock().push_back(current_proc);
+                let r_pid = REAPER_PID.load(Ordering::Relaxed);
+                if r_pid != 0 {
+                    let mut sleeping = SLEEPING.lock();
+                    if let Some(pos) = sleeping.iter().position(|p| p.id.0 == r_pid) {
+                        let reaper = sleeping.remove(pos).unwrap();
+                        rq.enqueue(reaper);
+                    }
+                }
             }
             ProcessState::Blocked | ProcessState::Sleeping(_) => {
                 SLEEPING.lock().push_back(current_proc);
@@ -246,8 +252,16 @@ pub fn schedule_on_cpu(cpu_id: usize, current_sp: u64, timer_tick: bool) -> u64 
             if rq.queues[highest_prio].is_empty() {
                 rq.active_bitmap &= !(1 << highest_prio);
             }
-            if proc.state == ProcessState::Dead || (proc.pending_signals & ((1 << 15) | (1 << 2))) != 0 {
+            if proc.state == ProcessState::Dead || (proc.pending_signals & ((1 << 15) | (1 << 2) | (1 << 9))) != 0 {
                 ZOMBIES.lock().push_back(proc);
+                let r_pid = REAPER_PID.load(Ordering::Relaxed);
+                if r_pid != 0 {
+                    let mut sleeping = SLEEPING.lock();
+                    if let Some(pos) = sleeping.iter().position(|p| p.id.0 == r_pid) {
+                        let reaper = sleeping.remove(pos).unwrap();
+                        rq.enqueue(reaper);
+                    }
+                }
                 continue;
             }
             next_proc = Some(proc);
@@ -384,6 +398,7 @@ pub fn destroy_process(proc: &Process) {
             crate::memory::vmm::destroy_userspace_pml4(proc.pml4_frame);
         }
     }
+    crate::kprintln!("destroy_process: Proceso PID {} destruido completamente", proc.id.0);
 }
 
 pub fn reaper_thread() -> ! {
@@ -457,10 +472,17 @@ pub fn reschedule_from_interrupt() {
 }
 
 pub fn wake_process(pid: u64) {
-    let mut sleeping = SLEEPING.lock();
-    if let Some(pos) = sleeping.iter().position(|p| p.id.0 == pid) {
-        let mut proc = sleeping.remove(pos).unwrap();
-        proc.state = ProcessState::Ready;
+    let proc = {
+        let mut sleeping = SLEEPING.lock();
+        if let Some(pos) = sleeping.iter().position(|p| p.id.0 == pid) {
+            let mut proc = sleeping.remove(pos).unwrap();
+            proc.state = ProcessState::Ready;
+            Some(proc)
+        } else {
+            None
+        }
+    };
+    if let Some(proc) = proc {
         enqueue_process(proc);
     }
     with_current_process(|current| {
@@ -471,17 +493,23 @@ pub fn wake_process(pid: u64) {
 }
 
 pub fn wake_waiters_for(exited_pid: ProcessId) {
-    let mut sleeping = SLEEPING.lock();
-    let mut i = 0;
-    while i < sleeping.len() {
-        if sleeping[i].waiting_for == Some(exited_pid) {
-            let mut proc = sleeping.remove(i).unwrap();
-            proc.waiting_for = None;
-            proc.state = ProcessState::Ready;
-            enqueue_process(proc);
-            continue;
+    let mut waiters = alloc::vec::Vec::new();
+    {
+        let mut sleeping = SLEEPING.lock();
+        let mut i = 0;
+        while i < sleeping.len() {
+            if sleeping[i].waiting_for == Some(exited_pid) {
+                let mut proc = sleeping.remove(i).unwrap();
+                proc.waiting_for = None;
+                proc.state = ProcessState::Ready;
+                waiters.push(proc);
+                continue;
+            }
+            i += 1;
         }
-        i += 1;
+    }
+    for proc in waiters {
+        enqueue_process(proc);
     }
     with_current_process(|current| {
         if current.waiting_for == Some(exited_pid) {
@@ -495,19 +523,25 @@ pub fn wake_stdin_waiters() -> bool {
     let fg = crate::shell::FOREGROUND_TASK.load(Ordering::SeqCst);
     let s_pid = SHELL_PID.load(Ordering::Relaxed);
 
-    let mut sleeping = SLEEPING.lock();
+    let mut to_wake = alloc::vec::Vec::new();
     let mut woke_waiter = false;
-    let mut i = 0;
-    while i < sleeping.len() {
-        let target_pid = sleeping[i].id.0;
-        if target_pid == fg || (fg == 0 && target_pid == s_pid) {
-            let mut proc = sleeping.remove(i).unwrap();
-            proc.state = ProcessState::Ready;
-            enqueue_process(proc);
-            woke_waiter = true;
-            continue;
+    {
+        let mut sleeping = SLEEPING.lock();
+        let mut i = 0;
+        while i < sleeping.len() {
+            let target_pid = sleeping[i].id.0;
+            if target_pid == fg || (fg == 0 && target_pid == s_pid) {
+                let mut proc = sleeping.remove(i).unwrap();
+                proc.state = ProcessState::Ready;
+                to_wake.push(proc);
+                woke_waiter = true;
+                continue;
+            }
+            i += 1;
         }
-        i += 1;
+    }
+    for proc in to_wake {
+        enqueue_process(proc);
     }
     with_current_process(|current| {
         if current.id.0 == fg || (fg == 0 && current.id.0 == s_pid) {
@@ -704,31 +738,40 @@ pub fn spawn_user_process(
 pub fn send_signal(pid: ProcessId, signal: u8) {
     if signal >= u64::BITS as u8 { return; }
 
+    let is_fatal = signal == 9 || signal == 2 || signal == 15;
     let mut found = false;
-    let mut sleeping = SLEEPING.lock();
-    if let Some(pos) = sleeping.iter().position(|p| p.id == pid) {
-        found = true;
-        if signal == 9 {
+    let mut killed = false;
+    let mut ipi_cpu = None;
+    let mut non_fatal_proc = None;
+
+    {
+        let mut sleeping = SLEEPING.lock();
+        if let Some(pos) = sleeping.iter().position(|p| p.id == pid) {
+            found = true;
             let mut proc = sleeping.remove(pos).unwrap();
             proc.pending_signals |= 1 << signal;
-            proc.state = ProcessState::Dead;
-            ZOMBIES.lock().push_back(proc);
-        } else {
-            sleeping[pos].pending_signals |= 1 << signal;
-            let mut proc = sleeping.remove(pos).unwrap();
-            proc.state = ProcessState::Ready;
-            enqueue_process(proc);
+            if is_fatal {
+                proc.state = ProcessState::Dead;
+                ZOMBIES.lock().push_back(proc);
+                killed = true;
+            } else {
+                proc.state = ProcessState::Ready;
+                non_fatal_proc = Some(proc);
+            }
         }
     }
-    drop(sleeping);
+    if let Some(proc) = non_fatal_proc {
+        enqueue_process(proc);
+    }
 
     if !found {
         let online = crate::arch::x86_64::smp::ONLINE_CPUS.load(Ordering::Acquire) as usize;
+        let curr_cpu = crate::arch::x86_64::percpu::current_cpu_id() as usize;
         for id in 0..online.min(MAX_CPUS) {
             let mut rq = RUNQUEUES[id].lock();
             for q in 0..32 {
                 if let Some(pos) = rq.queues[q].iter().position(|p| p.id == pid) {
-                    if signal == 9 {
+                    if is_fatal {
                         let mut proc = rq.queues[q].remove(pos).unwrap();
                         if rq.queues[q].is_empty() {
                             rq.active_bitmap &= !(1 << q);
@@ -736,6 +779,7 @@ pub fn send_signal(pid: ProcessId, signal: u8) {
                         proc.pending_signals |= 1 << signal;
                         proc.state = ProcessState::Dead;
                         ZOMBIES.lock().push_back(proc);
+                        killed = true;
                     } else {
                         rq.queues[q][pos].pending_signals |= 1 << signal;
                     }
@@ -743,27 +787,45 @@ pub fn send_signal(pid: ProcessId, signal: u8) {
                     break;
                 }
             }
+            if !found {
+                if let Some(ref mut curr) = rq.current {
+                    if curr.id == pid {
+                        curr.pending_signals |= 1 << signal;
+                        if is_fatal {
+                            curr.state = ProcessState::Dead;
+                            killed = true;
+                            if id != curr_cpu {
+                                ipi_cpu = Some(id);
+                            }
+                        }
+                        found = true;
+                    }
+                }
+            }
+            drop(rq);
             if found {
                 break;
             }
         }
     }
 
-    with_current_process(|current| {
-        if current.id == pid {
-            current.pending_signals |= 1 << signal;
-            if signal == 9 {
-                current.state = ProcessState::Dead;
-            }
+    if let Some(target_cpu) = ipi_cpu {
+        unsafe {
+            crate::arch::x86_64::apic::send_ipi(target_cpu as u8, 0xF0, 0);
         }
-    });
+    }
 
-    if signal == 9 {
+    if is_fatal {
         let fg = crate::shell::FOREGROUND_TASK.load(Ordering::SeqCst);
         if fg == pid.0 {
             crate::shell::FOREGROUND_TASK.store(0, Ordering::SeqCst);
             crate::drivers::framebuffer::leave_alt_screen_if_active();
         }
+    }
+
+    if killed {
+        wake_waiters_for(pid);
+        wake_reaper_if_needed();
     }
 }
 
@@ -771,61 +833,9 @@ pub fn total_ticks() -> u64 {
     RUNQUEUES[0].lock().total_ticks
 }
 
-#[unsafe(naked)]
-pub extern "C" fn timer_interrupt_handler_asm() {
-    core::arch::naked_asm!(
-        "test byte ptr [rsp + 8], 3",
-        "jz 1f",
-        "swapgs",
-    "1:",
-        "push rax", "push rcx", "push rdx", "push rbx",
-        "push rbp", "push rsi", "push rdi",
-        "push r8", "push r9", "push r10", "push r11",
-        "push r12", "push r13", "push r14", "push r15",
-
-        "mov rdi, rsp",
-        "and rsp, -16",
-        "call timer_interrupt_handler_rust",
-        "mov rsp, rax",
-
-        "pop r15", "pop r14", "pop r13", "pop r12",
-        "pop r11", "pop r10", "pop r9", "pop r8",
-        "pop rdi", "pop rsi", "pop rbp",
-        "pop rbx", "pop rdx", "pop rcx", "pop rax",
-
-        "test byte ptr [rsp + 8], 3",
-        "jz 2f",
-        "swapgs",
-    "2:",
-        "iretq",
-    );
-}
-
-#[unsafe(naked)]
-pub extern "C" fn reschedule_interrupt_handler_asm() {
-    core::arch::naked_asm!(
-        "test byte ptr [rsp + 8], 3",
-        "jz 1f",
-        "swapgs",
-    "1:",
-        "push rax", "push rcx", "push rdx", "push rbx",
-        "push rbp", "push rsi", "push rdi",
-        "push r8", "push r9", "push r10", "push r11",
-        "push r12", "push r13", "push r14", "push r15",
-        "mov rdi, rsp",
-        "and rsp, -16",
-        "call reschedule_interrupt_handler_rust",
-        "mov rsp, rax",
-        "pop r15", "pop r14", "pop r13", "pop r12",
-        "pop r11", "pop r10", "pop r9", "pop r8",
-        "pop rdi", "pop rsi", "pop rbp",
-        "pop rbx", "pop rdx", "pop rcx", "pop rax",
-        "test byte ptr [rsp + 8], 3",
-        "jz 2f",
-        "swapgs",
-    "2:",
-        "iretq",
-    );
+extern "C" {
+    pub fn timer_interrupt_handler_asm();
+    pub fn reschedule_interrupt_handler_asm();
 }
 
 #[no_mangle]

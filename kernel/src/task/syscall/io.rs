@@ -83,6 +83,13 @@ pub fn sys_read(fd: u64, buffer_ptr: u64, len: usize) -> u64 {
     let mut bytes_read = 0;
     while bytes_read < len {
         crate::drivers::serial::drain_to_stdin();
+        let is_dead = crate::task::scheduler::with_current_process(|curr| {
+            curr.state == crate::task::process::ProcessState::Dead
+        }).unwrap_or(false);
+        if is_dead {
+            crate::task::scheduler::yield_current();
+            return 0;
+        }
         let mut queue = crate::drivers::tty::STDIN.lock();
         if let Some(c) = queue.pop_front() {
             let mut b = [0; 4];
@@ -124,6 +131,13 @@ pub fn sys_read_nonblocking(arg1: u64, buffer_ptr: u64, len: usize) -> u64 {
     }
 
     crate::drivers::serial::drain_to_stdin();
+    let is_dead = crate::task::scheduler::with_current_process(|curr| {
+        curr.state == crate::task::process::ProcessState::Dead
+    }).unwrap_or(false);
+    if is_dead {
+        crate::task::scheduler::yield_current();
+        return 0;
+    }
     let mut bytes_read = 0;
     let mut queue = crate::drivers::tty::STDIN.lock();
     while let Some(c) = queue.pop_front() {

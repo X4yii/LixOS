@@ -43,7 +43,7 @@ Paquetes con valores propios: `edition = "2024"` y `rust-version = "1.85.0"` en 
 
 ```toml
 [toolchain]
-channel = "nightly"
+channel = "stable"
 components = ["rust-src", "llvm-tools-preview"]
 targets = ["x86_64-unknown-none"]
 ```
@@ -57,10 +57,12 @@ El alias es `cargo xtask <comando>`.
 | Comando | Acción |
 | --- | --- |
 | `help` | Mensaje de uso (valor por defecto) |
-| `build` | Inicializa submódulos y compila kernel, `ltop` y `vanish` |
+| `build` | Inicializa submódulos, ensambla `.S` en `kernel/asm/` y compila kernel, `ltop` y `vanish` |
 | `check` | `cargo check --workspace` |
+| `asm` | Ensambla archivos `.S` en `kernel/asm/` a objetos `.o` en `target/x86_64-unknown-none/asm_objs/` |
+| `deps` | Verifica e instala dependencias del sistema requeridas (`qemu`, `xorriso`, `mtools`, `ovmf`, etc.) |
 | `iso` | Ejecuta `build` y genera `target/lixos.iso` |
-| `run` | Ejecuta `iso`, crea la imagen de disco y lanza QEMU |
+| `run` | Ejecuta `deps`, `iso`, crea la imagen de disco y lanza QEMU |
 
 ### 3.1 Banderas de compilación
 

@@ -17,6 +17,7 @@ pub fn push_char(c: char) -> bool {
         if fg != 0 {
             crate::task::scheduler::send_signal(crate::task::process::ProcessId(fg), 2);
             crate::task::CANCEL_REQUEST.store(true, Ordering::SeqCst);
+            return true;
         }
     }
 

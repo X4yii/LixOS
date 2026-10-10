@@ -7,6 +7,8 @@ use lix_storage::{GptPartition, build_gpt_image};
 
 mod nvme_test;
 mod codegen;
+mod assembler;
+mod deps;
 
 /// Builds a disposable QEMU-only GPT image. Existing images are never replaced.
 fn create_nvme_test_image(path: &Path, logical_block_size: u64) -> Result<(), String> {
@@ -68,6 +70,18 @@ fn main() {
         "check" => task_check(),
         "iso" => task_iso(),
         "run" => task_run(),
+        "asm" => {
+            if let Err(error) = assembler::assemble_kernel_asm() {
+                eprintln!("[xtask] {error}");
+                exit(1);
+            }
+        }
+        "deps" => {
+            if let Err(error) = deps::ensure_dependencies() {
+                eprintln!("[xtask] {error}");
+                exit(1);
+            }
+        }
         "test-nvme" => nvme_test::run(),
         "codegen" => codegen::run(),
         "nvme-image" => {
@@ -98,6 +112,8 @@ fn print_help() {
     println!("  codegen - Genera tablas de syscalls e includes desde abi/syscalls.toml");
     println!("  iso     - Prepara el árbol de arranque y configuración de Limine");
     println!("  run [--headless] [--nvme-4k] - Compila y lanza QEMU; --nvme-4k prueba sectores NVMe de 4 KiB");
+    println!("  asm     - Ensambla archivos .S en kernel/asm/");
+    println!("  deps    - Verifica e instala dependencias requeridas del sistema");
     println!("  test-nvme - Prueba arranque UEFI+NVMe de 512 B y 4 KiB en QEMU");
     println!("  nvme-image [PATH] - Crea una imagen GPT+ext4 desechable para pruebas (no sobrescribe)");
     println!("  nvme-image-4k [PATH] - Igual, con sectores lógicos NVMe de 4 KiB");
@@ -128,11 +144,25 @@ fn strip_binary(path: &Path) {
 
 fn task_build() {
     init_submodules();
+    let _ = deps::ensure_dependencies();
+
+    let asm_objs = match assembler::assemble_kernel_asm() {
+        Ok(objs) => objs,
+        Err(e) => {
+            eprintln!("[xtask] Error ensamblando archivos .S: {e}");
+            exit(1);
+        }
+    };
+
+    let mut kernel_rustflags = KERNEL_RUSTFLAGS.to_string();
+    for obj in &asm_objs {
+        kernel_rustflags.push_str(&format!(" -C link-arg={}", obj.display()));
+    }
 
     println!("[xtask] Compilando lix-kernel (x86_64-unknown-none)...");
     let status_k = Command::new("cargo")
         .env("RUSTC_BOOTSTRAP", "1")
-        .env("RUSTFLAGS", KERNEL_RUSTFLAGS)
+        .env("RUSTFLAGS", kernel_rustflags)
         .args([
             "build", "--package", "kernel",
             "--target", "x86_64-unknown-none",

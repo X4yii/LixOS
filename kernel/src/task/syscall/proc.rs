@@ -35,6 +35,7 @@ pub fn sys_process_exit(code: i32) -> u64 {
     crate::task::scheduler::with_current_process(|curr| {
         curr.state = crate::task::process::ProcessState::Dead;
     });
+    crate::task::scheduler::wake_waiters_for(crate::task::process::ProcessId(pid));
     let r_pid = crate::task::scheduler::REAPER_PID.load(core::sync::atomic::Ordering::Relaxed);
     if r_pid != 0 {
         crate::task::scheduler::wake_process(r_pid);
@@ -68,6 +69,9 @@ pub fn sys_process_kill(target_pid: u64, signal: u8) -> u64 {
         1
     } else {
         crate::task::scheduler::send_signal(crate::task::process::ProcessId(target_pid), signal);
+        if target_pid == crate::task::scheduler::current_pid() {
+            crate::task::scheduler::yield_current();
+        }
         0
     }
 }
@@ -169,7 +173,9 @@ pub fn sys_sleep(ms: u64) -> u64 {
     let ticks = ms.saturating_add(9).checked_div(10).unwrap_or(1).max(1);
     let target_tick = crate::task::scheduler::total_ticks() + ticks;
     crate::task::scheduler::with_current_process(|curr| {
-        curr.state = crate::task::process::ProcessState::Sleeping(target_tick);
+        if curr.state != crate::task::process::ProcessState::Dead {
+            curr.state = crate::task::process::ProcessState::Sleeping(target_tick);
+        }
     });
     crate::task::scheduler::yield_current();
     0
