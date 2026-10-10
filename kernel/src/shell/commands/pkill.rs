@@ -17,16 +17,11 @@ impl Command for PkillCommand {
         let pids: alloc::vec::Vec<_> = {
             let sched = crate::task::scheduler::SCHEDULER.lock();
             let mut matched = alloc::vec::Vec::new();
-            for proc in sched.processes.iter() {
+            sched.for_each_process(|proc| {
                 if proc.name.contains(name) {
                     matched.push(proc.id);
                 }
-            }
-            if let Some(ref current) = sched.current {
-                if current.name.contains(name) {
-                    matched.push(current.id);
-                }
-            }
+            });
             matched
         };
 

@@ -1,5 +1,5 @@
 #![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 #![feature(abi_x86_interrupt)]
 
 extern crate alloc;
@@ -15,6 +15,7 @@ pub mod sync;
 pub mod fs;
 pub mod task;
 pub mod shell;
+pub mod power;
 
 #[used]
 #[link_section = ".requests_start_marker"]
@@ -35,7 +36,17 @@ pub static HHDM_REQUEST: boot::limine::HhdmRequest = boot::limine::HhdmRequest::
 
 #[used]
 #[link_section = ".requests"]
+pub static EXECUTABLE_CMDLINE_REQUEST: boot::limine::ExecutableCmdlineRequest =
+    boot::limine::ExecutableCmdlineRequest::new();
+
+#[used]
+#[link_section = ".requests"]
+pub static RSDP_REQUEST: boot::limine::RsdpRequest = boot::limine::RsdpRequest::new();
+
+#[used]
+#[link_section = ".requests"]
 static MODULE_REQUEST: boot::limine::ModuleRequest = boot::limine::ModuleRequest::new();
+
 
 #[used]
 #[link_section = ".requests"]
@@ -43,11 +54,17 @@ static FRAMEBUFFER_REQUEST: boot::limine::FramebufferRequest =
     boot::limine::FramebufferRequest::new();
 
 #[used]
+#[link_section = ".requests"]
+static STACK_SIZE_REQUEST: boot::limine::StackSizeRequest =
+    boot::limine::StackSizeRequest::new().with_size(0x200000);
+
+#[used]
 #[link_section = ".requests_end_marker"]
 static _REQUESTS_END: boot::limine::RequestsEndMarker =
     boot::limine::RequestsEndMarker::new();
 
 #[no_mangle]
+#[cfg(not(test))]
 pub extern "C" fn _start() -> ! {
     let serial = drivers::serial::init();
     klog::register_console(serial);
@@ -87,7 +104,16 @@ pub extern "C" fn _start() -> ! {
     drivers::pci::init();
 
     task::init();
+    let rsdp_addr = RSDP_REQUEST.get_response().map(|r| r.address() as u64).unwrap_or(0);
+    if let Some(topology) = unsafe { crate::arch::x86_64::acpi::parse_madt(rsdp_addr) } {
+        kprintln!("[acpi] MADT detectada: {} CPUs, LAPIC base: {:#x}", topology.cpu_count, topology.lapic_phys_addr);
+        unsafe { crate::arch::x86_64::smp::boot_secondary_cores(&topology); }
+    } else {
+        kprintln!("[acpi] AVISO: No se detecto tabla MADT, continuando en modo mononucleo");
+    }
+
     if let Some(module_resp) = MODULE_REQUEST.get_response() {
+
         let modules = module_resp.modules();
         kprintln!("[lix] Módulos cargados por bootloader: {}", modules.len());
         for module in modules {
@@ -105,6 +131,8 @@ pub extern "C" fn _start() -> ! {
         kprintln!("[lix] AVISO: No se encontraron módulos Initramfs.");
     }
 
+    drivers::keyboard::load_config_from_vfs();
+
 
     if let Some(fb_resp) = FRAMEBUFFER_REQUEST.get_response() {
         if let Some(fb) = fb_resp.framebuffers().next() {
@@ -120,7 +148,29 @@ pub extern "C" fn _start() -> ! {
 
     kprintln!("[lix] Consola unificada activa: Serial (COM1) + GOP Framebuffer + RAM Ring Buffer.");
     
-    crate::task::scheduler::spawn_kernel_thread(crate::drivers::tty::run_kernel_shell, "vanish");
+    let mut spawned_user_shell = false;
+    let vanish_data = fs::vfs::read_file("/bin/vanish.elf")
+        .or_else(|| fs::vfs::read_file("/vanish.elf"));
+
+    if let Some(data) = vanish_data {
+        match crate::task::elf::load_elf(&data, "/bin/vanish.elf", 1) {
+            Ok(pid) => {
+                kprintln!("[lix] Shell Vanish iniciada en Ring 3 (Userspace) con PID {}.", pid);
+                crate::task::scheduler::SHELL_PID.store(pid, core::sync::atomic::Ordering::Release);
+                spawned_user_shell = true;
+            }
+            Err(e) => {
+                kprintln!("[lix] AVISO: Error cargando vanish.elf en Ring 3: {}, usando fallback", e);
+            }
+        }
+    }
+
+    if !spawned_user_shell {
+        kprintln!("[lix] ERROR: vanish.elf no encontrado, iniciando bucle de espera.");
+        let shell_pid = crate::task::scheduler::spawn_kernel_thread(crate::arch::x86_64::halt_loop, "idle_shell");
+        crate::task::scheduler::SHELL_PID.store(shell_pid, core::sync::atomic::Ordering::Release);
+    }
+
     crate::task::scheduler::SCHEDULER.lock().started = true;
     crate::arch::x86_64::halt_loop();
 }

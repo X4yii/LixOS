@@ -1,54 +1,35 @@
-use pc_keyboard::{layouts, DecodedKey, HandleControl, PS2Keyboard, ScancodeSet1};
-use crate::sync::IrqSafeSpinlock;
 use x86_64::instructions::port::Port;
-use lazy_static::lazy_static;
+use pc_keyboard::{DecodedKey, KeyCode};
 
-lazy_static! {
-    static ref KEYBOARD: IrqSafeSpinlock<PS2Keyboard<layouts::Us104Key, ScancodeSet1>> =
-        IrqSafeSpinlock::new(PS2Keyboard::new(
-            ScancodeSet1::new(),
-            layouts::Us104Key,
-            HandleControl::MapLettersToUnicode
-        ));
-}
-
-pub fn handle_interrupt() {
-    let mut keyboard = crate::sync::IrqSafeSpinlock::lock(&KEYBOARD);
+pub fn handle_interrupt() -> bool {
     let mut port = Port::new(0x60);
-    
     let scancode: u8 = unsafe { port.read() };
-    
-    if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
-        if let Some(key) = keyboard.process_keyevent(key_event) {
-            match key {
-                DecodedKey::Unicode(character) => {
-                    if character == '\x03' { // Ctrl+C
-                        let fg = crate::shell::FOREGROUND_TASK.load(core::sync::atomic::Ordering::SeqCst);
-                        if fg != 0 {
-                            crate::task::scheduler::send_signal(crate::task::process::ProcessId(fg), 2); // SIGINT
-                        }
-                        crate::shell::CANCEL_REQUEST.store(true, core::sync::atomic::Ordering::SeqCst);
-                    } else {
-                        crate::drivers::tty::STDIN.lock().push_back(character);
-                        crate::task::scheduler::wake_process(2);
-                    }
-                }
-                DecodedKey::RawKey(raw) => {
-                    use pc_keyboard::KeyCode;
-                    let ch = match raw {
-                        KeyCode::Backspace => Some('\x08'),
-                        KeyCode::ArrowUp => Some('\x11'),
-                        KeyCode::ArrowDown => Some('\x12'),
-                        KeyCode::ArrowLeft => Some('\x13'),
-                        KeyCode::ArrowRight => Some('\x14'),
-                        _ => None,
-                    };
-                    if let Some(c) = ch {
-                        crate::drivers::tty::STDIN.lock().push_back(c);
-                        crate::task::scheduler::wake_process(2);
-                    }
+
+    if let Some(key) = crate::drivers::keyboard::process_scancode(scancode) {
+        match key {
+            DecodedKey::Unicode(character) => {
+                crate::drivers::tty::push_char(character)
+            }
+            DecodedKey::RawKey(raw) => {
+                match raw {
+                    KeyCode::Backspace => crate::drivers::tty::push_char('\x08'),
+                    KeyCode::ArrowUp => crate::drivers::tty::push_str("\x1b[A"),
+                    KeyCode::ArrowDown => crate::drivers::tty::push_str("\x1b[B"),
+                    KeyCode::ArrowRight => crate::drivers::tty::push_str("\x1b[C"),
+                    KeyCode::ArrowLeft => crate::drivers::tty::push_str("\x1b[D"),
+                    KeyCode::Home => crate::drivers::tty::push_str("\x1b[H"),
+                    KeyCode::End => crate::drivers::tty::push_str("\x1b[F"),
+                    KeyCode::Delete => crate::drivers::tty::push_str("\x1b[3~"),
+                    KeyCode::NumpadSubtract => crate::drivers::tty::push_char('-'),
+                    KeyCode::NumpadAdd => crate::drivers::tty::push_char('+'),
+                    KeyCode::NumpadMultiply => crate::drivers::tty::push_char('*'),
+                    KeyCode::NumpadDivide => crate::drivers::tty::push_char('/'),
+                    KeyCode::NumpadEnter => crate::drivers::tty::push_char('\n'),
+                    _ => false,
                 }
             }
         }
+    } else {
+        false
     }
 }

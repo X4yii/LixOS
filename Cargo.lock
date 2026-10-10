@@ -268,6 +268,7 @@ dependencies = [
  "lazy_static",
  "limine",
  "linked_list_allocator",
+ "lix-storage",
  "lix-sys",
  "pc-keyboard",
  "pic8259",
@@ -361,6 +362,9 @@ dependencies = [
 [[package]]
 name = "lix-installer"
 version = "0.0.1"
+dependencies = [
+ "lix-storage",
+]
 
 [[package]]
 name = "lix-mkiso"
@@ -373,6 +377,10 @@ dependencies = [
  "lix-sys",
  "lix-ui",
 ]
+
+[[package]]
+name = "lix-storage"
+version = "0.0.1"
 
 [[package]]
 name = "lix-sys"
@@ -773,7 +781,9 @@ checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 name = "vanish"
 version = "0.0.1"
 dependencies = [
+ "linked_list_allocator",
  "lix-sys",
+ "sys-libc",
 ]
 
 [[package]]
@@ -816,6 +826,9 @@ dependencies = [
 [[package]]
 name = "xtask"
 version = "0.0.1"
+dependencies = [
+ "lix-storage",
+]
 
 [[package]]
 name = "yansi"

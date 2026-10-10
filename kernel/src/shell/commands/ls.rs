@@ -7,21 +7,13 @@ impl Command for LsCommand {
 
     fn execute(&self, args: &[&str]) {
         let path = if args.is_empty() { "/" } else { args[0] };
-        let vfs = crate::fs::vfs::VFS.lock();
-        
-        if let Some(fs) = &vfs.root_fs {
-            if let Some(files) = fs.list_files(path) {
-                crate::kprintln!("Archivos en disco ({}):", path);
-                for f in files {
-                    crate::kprintln!("  - {}", f);
-                }
-            } else {
-                crate::kprintln!("ls: {}: No existe", path);
-            }
+        let files = crate::fs::vfs::list_files(path);
+        if files.is_empty() {
+            crate::kprintln!("ls: {}: vacío o no existe", path);
         } else {
-            crate::kprintln!("Archivos en disco RAM:");
-            for file in vfs.get_files() {
-                crate::kprintln!("  - {}", file.path);
+            crate::kprintln!("Archivos en {}:", path);
+            for file in files {
+                crate::kprintln!("  - {}", file);
             }
         }
     }

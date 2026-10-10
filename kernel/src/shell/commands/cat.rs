@@ -10,8 +10,7 @@ impl Command for CatCommand {
             crate::kprintln!("Uso: cat <archivo>");
             return;
         }
-        let vfs = crate::fs::vfs::VFS.lock();
-        if let Some(content) = vfs.read_file(args[0]) {
+        if let Some(content) = crate::fs::vfs::read_file(args[0]) {
             if let Ok(text) = core::str::from_utf8(&content) {
                 crate::kprintln!("{}", text);
             } else {

@@ -1,6 +1,9 @@
+#[cfg(not(test))]
 use core::panic::PanicInfo;
+#[cfg(not(test))]
 use crate::arch::x86_64::halt_loop;
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     unsafe {
@@ -11,9 +14,7 @@ fn panic(info: &PanicInfo) -> ! {
         crate::klog::force_unlock();
     }
 
-    unsafe {
-        crate::drivers::framebuffer::emergency_panic_screen();
-    }
+    crate::drivers::framebuffer::emergency_panic_screen();
 
     kprintln!("\n========================================");
     kprintln!("          LIXOS KERNEL PANIC            ");

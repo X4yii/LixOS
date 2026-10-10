@@ -5,3 +5,4 @@ edition = "2021"
 description = "Transactional non-destructive installer for LixOS"
 
 [dependencies]
+lix-storage = { path = "../../libs/lix-storage" }

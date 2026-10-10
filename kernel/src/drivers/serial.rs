@@ -27,6 +27,19 @@ impl SerialPort {
         unsafe { (inb(self.port + 5) & 0x20) != 0 }
     }
 
+    #[inline(always)]
+    pub fn is_data_ready(&self) -> bool {
+        unsafe { (inb(self.port + 5) & 0x01) != 0 }
+    }
+
+    pub fn read_byte(&self) -> Option<u8> {
+        if self.is_data_ready() {
+            unsafe { Some(inb(self.port)) }
+        } else {
+            None
+        }
+    }
+
     pub fn write_byte(&self, byte: u8) {
         while !self.is_transmit_empty() {
             core::hint::spin_loop();
@@ -60,5 +73,23 @@ pub fn init() -> &'static mut SerialPort {
         let port = &mut *COM1_DEVICE.0.get();
         port.init_hardware();
         port
+    }
+}
+
+pub fn drain_to_stdin() {
+    unsafe {
+        let port = &mut *COM1_DEVICE.0.get();
+        while port.is_data_ready() {
+            if let Some(byte) = port.read_byte() {
+                let ch = match byte {
+                    0x03 => '\x03',
+                    b'\r' => '\n',
+                    0x7F => '\x08',
+                    b if b >= 0x20 || b == b'\n' || b == 0x08 || b == 0x1B || b == b'\t' || (0x11..=0x14).contains(&b) => b as char,
+                    _ => continue,
+                };
+                crate::drivers::tty::push_char(ch);
+            }
+        }
     }
 }

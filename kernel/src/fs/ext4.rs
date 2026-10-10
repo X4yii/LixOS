@@ -1,9 +1,12 @@
-use crate::drivers::ahci::PRIMARY_DISK;
-use crate::memory::pmm::{alloc_frame, free_frame, PAGE_SIZE};
-use crate::drivers::block::BlockDevice;
+use crate::sync::IrqSafeSpinlock;
+use crate::memory::pmm::PAGE_SIZE;
+use crate::drivers::block::{BlockDevice, DmaBuffer};
 use crate::fs::vfs::FileSystem;
 use alloc::vec::Vec;
 use alloc::string::String;
+
+const MAX_EXT4_FILE_SIZE: usize = 64 * 1024 * 1024;
+const MAX_EXTENT_TREE_DEPTH: u16 = 5;
 
 #[repr(C, packed)]
 pub struct Ext4Superblock {
@@ -115,6 +118,14 @@ pub struct Ext4Extent {
 }
 
 #[repr(C, packed)]
+pub struct Ext4ExtentIdx {
+    pub ei_block: u32,
+    pub ei_leaf_lo: u32,
+    pub ei_leaf_hi: u16,
+    pub ei_unused: u16,
+}
+
+#[repr(C, packed)]
 pub struct Ext4DirEntry {
     pub inode: u32,
     pub rec_len: u16,
@@ -125,137 +136,260 @@ pub struct Ext4DirEntry {
 pub struct Ext4Fs {
     pub disk: &'static dyn BlockDevice,
     pub block_size: u32,
+    pub block_count: u32,
+    pub inode_count: u32,
     pub inode_size: u16,
     pub inodes_per_group: u32,
     pub is_64bit: bool,
     pub bg_desc_size: u16,
+    dma: IrqSafeSpinlock<DmaBuffer>,
 }
 
 impl Ext4Fs {
     pub fn new(disk: &'static dyn BlockDevice) -> Option<Self> {
-        let phys_frame = alloc_frame()?;
-        let hhdm_offset = crate::HHDM_REQUEST.get_response().map(|r| r.offset()).unwrap_or(0xffff800000000000);
-        let virt_addr = hhdm_offset + (phys_frame * PAGE_SIZE) as u64;
-        
-        let phys_ptr = (phys_frame * PAGE_SIZE) as *mut u8;
-        
-        if disk.read_sectors(2, 2, phys_ptr) {
-            let sb = unsafe { &*(virt_addr as *const Ext4Superblock) };
-            if sb.s_magic != 0xEF53 {
-                free_frame(phys_frame);
+        let geometry = disk.geometry().ok()?;
+        if geometry.block_size == 0 || geometry.block_size as usize > PAGE_SIZE {
+            return None;
+        }
+        let mut dma = DmaBuffer::allocate().ok()?;
+        let sb_lba = 1024 / geometry.block_size as u64;
+        let sb_offset = (1024 % geometry.block_size as u64) as usize;
+        let bytes_needed = sb_offset.checked_add(core::mem::size_of::<Ext4Superblock>())?;
+        let count = bytes_needed.div_ceil(geometry.block_size as usize);
+        if count == 0 || count > u16::MAX as usize || count * geometry.block_size as usize > PAGE_SIZE {
+            return None;
+        }
+        disk.read_blocks(sb_lba, count as u16, &mut dma).ok()?;
+        crate::fs::vfs::record_disk_read(count * geometry.block_size as usize);
+        let superblock_bytes = &dma.as_slice(count * geometry.block_size as usize).ok()?[sb_offset..];
+        let sb = unsafe { &*(superblock_bytes.as_ptr() as *const Ext4Superblock) };
+        {
+            let incompat = sb.s_feature_incompat;
+            let supported_incompat = 0x0000_00C2;
+            let blocks_count_hi = unsafe {
+                core::ptr::read_unaligned(superblock_bytes.as_ptr().add(0x150) as *const u32)
+            };
+            if sb.s_magic != 0xEF53
+                || sb.s_log_block_size > 2
+                || sb.s_inodes_per_group == 0
+                || sb.s_blocks_per_group == 0
+                || sb.s_inode_size < core::mem::size_of::<Ext4Inode>() as u16
+                || sb.s_inode_size as u32 > (1024u32 << sb.s_log_block_size)
+                || (1024u32 << sb.s_log_block_size) % sb.s_inode_size as u32 != 0
+                || incompat & !supported_incompat != 0
+                || incompat & 0x40 == 0
+                || incompat & 0x02 == 0
+                || sb.s_blocks_count_lo == 0
+                || blocks_count_hi != 0
+            {
                 return None;
             }
-            
+
             let block_size = 1024 << sb.s_log_block_size;
-            let is_64bit = (sb.s_feature_incompat & 0x80) != 0;
+            let is_64bit = incompat & 0x80 != 0;
             let bg_desc_size = if is_64bit { sb.s_desc_size } else { 32 };
             let inode_size = sb.s_inode_size;
             let inodes_per_group = sb.s_inodes_per_group;
-            
-            free_frame(phys_frame);
+            let block_count = sb.s_blocks_count_lo;
+            let inode_count = sb.s_inodes_count;
+            if (is_64bit && bg_desc_size < 64)
+                || (!is_64bit && bg_desc_size != 32)
+                || bg_desc_size as u32 > block_size
+            {
+                return None;
+            }
+
             Some(Self {
                 disk,
                 block_size,
+                block_count,
+                inode_count,
                 inode_size,
                 inodes_per_group,
                 is_64bit,
                 bg_desc_size,
+                dma: IrqSafeSpinlock::new(dma),
             })
-        } else {
-            free_frame(phys_frame);
-            None
         }
     }
 
     fn read_block(&self, block_num: u32) -> Option<Vec<u8>> {
-        let phys_frame = alloc_frame()?;
-        let hhdm_offset = crate::HHDM_REQUEST.get_response().map(|r| r.offset()).unwrap_or(0xffff800000000000);
-        let virt_addr = hhdm_offset + (phys_frame * PAGE_SIZE) as u64;
-        let phys_ptr = (phys_frame * PAGE_SIZE) as *mut u8;
-        
-        if self.disk.read_blocks(block_num as u64, 1, self.block_size, phys_ptr) {
-            let slice = unsafe { core::slice::from_raw_parts(virt_addr as *const u8, self.block_size as usize) };
-            let vec = slice.to_vec();
-            free_frame(phys_frame);
-            Some(vec)
-        } else {
-            free_frame(phys_frame);
-            None
+        if block_num >= self.block_count || self.block_size as usize > PAGE_SIZE {
+            return None;
         }
+        let geometry = self.disk.geometry().ok()?;
+        let byte_offset = (block_num as u64).checked_mul(self.block_size as u64)?;
+        let start = byte_offset / geometry.block_size as u64;
+        let offset = (byte_offset % geometry.block_size as u64) as usize;
+        let bytes = offset.checked_add(self.block_size as usize)?;
+        let count = bytes.div_ceil(geometry.block_size as usize);
+        if count == 0 || count > u16::MAX as usize || count * geometry.block_size as usize > PAGE_SIZE {
+            return None;
+        }
+        let mut dma = self.dma.lock();
+        self.disk.read_blocks(start, count as u16, &mut dma).ok()?;
+        crate::fs::vfs::record_disk_read(count * geometry.block_size as usize);
+        let source = dma.as_slice(count * geometry.block_size as usize).ok()?;
+        let data = source.get(offset..offset + self.block_size as usize)?;
+        let mut result = Vec::new();
+        result.try_reserve_exact(data.len()).ok()?;
+        result.extend_from_slice(data);
+        Some(result)
     }
 
     fn get_inode(&self, inode_num: u32) -> Option<Vec<u8>> {
+        if inode_num == 0 || inode_num > self.inode_count || self.inodes_per_group == 0 {
+            return None;
+        }
         let bg_num = (inode_num - 1) / self.inodes_per_group;
         let inode_index = (inode_num - 1) % self.inodes_per_group;
         
-        // Find BGDT
-        let bgdt_block = if self.block_size == 1024 { 2 } else { 1 };
+        let bgdt_block: u32 = if self.block_size == 1024 { 2 } else { 1 };
         
-        let bgdt_data = self.read_block(bgdt_block)?;
         let desc_size = if self.is_64bit { self.bg_desc_size as usize } else { 32 };
-        let offset = bg_num as usize * desc_size;
-        
-        let bg_desc = unsafe { &*(bgdt_data.as_ptr().add(offset) as *const Ext4BlockGroupDescriptor) };
-        let inode_table_lo = bg_desc.bg_inode_table_lo;
-        let inode_table_hi = if self.is_64bit && desc_size >= 64 { bg_desc.bg_inode_table_hi } else { 0 };
+        let descriptors_per_block = self.block_size as usize / desc_size;
+        if descriptors_per_block == 0 { return None; }
+        let descriptor_block_offset = bg_num as usize / descriptors_per_block;
+        let offset = (bg_num as usize % descriptors_per_block).checked_mul(desc_size)?;
+        let descriptor_block = bgdt_block.checked_add(u32::try_from(descriptor_block_offset).ok()?)?;
+        let bgdt_data = self.read_block(descriptor_block)?;
+        let descriptor_bytes = if self.is_64bit && desc_size >= 64 { 44 } else { 12 };
+        let desc_end = offset.checked_add(descriptor_bytes)?;
+        let desc_bytes = bgdt_data.get(offset..desc_end)?;
+        let inode_table_lo = u32::from_le_bytes(desc_bytes.get(8..12)?.try_into().ok()?);
+        let inode_table_hi = if self.is_64bit && desc_size >= 64 {
+            u32::from_le_bytes(desc_bytes.get(40..44)?.try_into().ok()?)
+        } else { 0 };
         let inode_table_block = ((inode_table_hi as u64) << 32) | (inode_table_lo as u64);
         
         let inode_offset = inode_index as u64 * (self.inode_size as u64);
         let block_offset = inode_offset / (self.block_size as u64);
         let byte_offset_in_block = inode_offset % (self.block_size as u64);
         
-        let target_block = inode_table_block as u32 + block_offset as u32;
+        let target_block = inode_table_block.checked_add(block_offset)?;
+        let target_block = u32::try_from(target_block).ok()?;
         let block_data = self.read_block(target_block)?;
-        
-        let inode_data = block_data[byte_offset_in_block as usize..(byte_offset_in_block as usize + self.inode_size as usize)].to_vec();
+
+        let inode_start = usize::try_from(byte_offset_in_block).ok()?;
+        let inode_end = inode_start.checked_add(self.inode_size as usize)?;
+        let inode_bytes = block_data.get(inode_start..inode_end)?;
+        let mut inode_data = Vec::new();
+        inode_data.try_reserve_exact(inode_bytes.len()).ok()?;
+        inode_data.extend_from_slice(inode_bytes);
         Some(inode_data)
     }
 
-    fn read_inode_data(&self, inode_data: &[u8]) -> Option<Vec<u8>> {
-        let inode = unsafe { &*(inode_data.as_ptr() as *const Ext4Inode) };
-        let size = inode.i_size_lo;
-        
-        let extent_header = unsafe { &*(inode.i_block.as_ptr() as *const Ext4ExtentHeader) };
-        if extent_header.eh_magic != 0xF30A {
-            return None; // Non-extent files not supported right now
+    fn parse_extent_node(
+        &self,
+        node_data: &[u8],
+        file_data: &mut Vec<u8>,
+        max_size: usize,
+        expected_depth: u16,
+    ) -> Option<()> {
+        if node_data.len() < core::mem::size_of::<Ext4ExtentHeader>() { return None; }
+        let header = unsafe { core::ptr::read_unaligned(node_data.as_ptr() as *const Ext4ExtentHeader) };
+        if header.eh_magic != 0xF30A || header.eh_depth != expected_depth || expected_depth > MAX_EXTENT_TREE_DEPTH {
+            return None;
         }
-        
-        if extent_header.eh_depth == 0 && extent_header.eh_entries > 0 {
-            let mut file_data = Vec::new();
-            let entries_count = extent_header.eh_entries as usize;
 
-            for i in 0..entries_count {
-                let extent = unsafe { &*(inode.i_block.as_ptr().offset(12 + (i * 12) as isize) as *const Ext4Extent) };
-                let phys_data_block = ((extent.ee_start_hi as u64) << 32) | (extent.ee_start_lo as u64);
-                let num_blocks = extent.ee_len;
+        let entries_count = header.eh_entries as usize;
+        let max_entries = (node_data.len() - core::mem::size_of::<Ext4ExtentHeader>()) / 12;
+        if entries_count > max_entries || entries_count > header.eh_max as usize || header.eh_max as usize > max_entries {
+            return None;
+        }
 
-                for b in 0..num_blocks {
-                    if let Some(mut block_data) = self.read_block((phys_data_block + b as u64) as u32) {
-                        file_data.append(&mut block_data);
+        for index in 0..entries_count {
+            if file_data.len() >= max_size { break; }
+            let entry_offset = core::mem::size_of::<Ext4ExtentHeader>() + index * 12;
+            let entry = node_data.get(entry_offset..entry_offset + 12)?;
+            if expected_depth == 0 {
+                let extent = unsafe { core::ptr::read_unaligned(entry.as_ptr() as *const Ext4Extent) };
+                let logical_start = (extent.ee_block as usize).checked_mul(self.block_size as usize)?;
+                if logical_start < file_data.len() { return None; }
+                if logical_start >= max_size { break; }
+                file_data.try_reserve(logical_start - file_data.len()).ok()?;
+                file_data.resize(logical_start, 0);
+
+                let raw_len = extent.ee_len;
+                let uninitialized = raw_len > 32768;
+                let block_count = if uninitialized { raw_len - 32768 } else { raw_len };
+                let physical_start = ((extent.ee_start_hi as u64) << 32) | extent.ee_start_lo as u64;
+                for block_offset in 0..block_count as u64 {
+                    if file_data.len() >= max_size { break; }
+                    let physical_block = physical_start.checked_add(block_offset)?;
+                    let physical_block = u32::try_from(physical_block).ok()?;
+                    let append_len = (max_size - file_data.len()).min(self.block_size as usize);
+                    file_data.try_reserve(append_len).ok()?;
+                    if uninitialized {
+                        file_data.resize(file_data.len() + append_len, 0);
+                    } else {
+                        let block = self.read_block(physical_block)?;
+                        file_data.extend_from_slice(block.get(..append_len)?);
                     }
                 }
+            } else {
+                let index_entry = unsafe { core::ptr::read_unaligned(entry.as_ptr() as *const Ext4ExtentIdx) };
+                let child_block = ((index_entry.ei_leaf_hi as u64) << 32) | index_entry.ei_leaf_lo as u64;
+                let child_block = u32::try_from(child_block).ok()?;
+                let child_data = self.read_block(child_block)?;
+                self.parse_extent_node(&child_data, file_data, max_size, expected_depth - 1)?;
             }
-            
-            file_data.truncate(size as usize);
-            return Some(file_data);
         }
-        None
+        Some(())
+    }
+
+    fn read_inode_data(&self, inode_data: &[u8]) -> Option<Vec<u8>> {
+        if inode_data.len() < core::mem::size_of::<Ext4Inode>() { return None; }
+        let inode = unsafe { core::ptr::read_unaligned(inode_data.as_ptr() as *const Ext4Inode) };
+        let size_lo = inode.i_size_lo as u64;
+        let size_hi = if inode.i_mode & 0xF000 == 0x8000 { (inode.i_size_high as u64) << 32 } else { 0 };
+        let full_size = usize::try_from(size_hi | size_lo).ok()?;
+        if full_size > MAX_EXT4_FILE_SIZE { return None; }
+
+        let extent_header = unsafe { core::ptr::read_unaligned(inode.i_block.as_ptr() as *const Ext4ExtentHeader) };
+        if extent_header.eh_magic != 0xF30A || extent_header.eh_depth > MAX_EXTENT_TREE_DEPTH {
+            return None;
+        }
+
+        let mut file_data = Vec::new();
+        file_data.try_reserve_exact(full_size).ok()?;
+        self.parse_extent_node(&inode.i_block, &mut file_data, full_size, extent_header.eh_depth)?;
+        if file_data.len() < full_size {
+            file_data.resize(full_size, 0);
+        }
+        Some(file_data)
+    }
+
+    fn inode_is_directory(inode_data: &[u8]) -> bool {
+        inode_data.get(..2)
+            .map(|mode| u16::from_le_bytes([mode[0], mode[1]]) & 0xF000 == 0x4000)
+            .unwrap_or(false)
+    }
+
+    fn directory_entry(data: &[u8], offset: usize) -> Option<(u32, usize, usize)> {
+        let header_end = offset.checked_add(core::mem::size_of::<Ext4DirEntry>())?;
+        let header = data.get(offset..header_end)?;
+        let inode = u32::from_le_bytes(header.get(0..4)?.try_into().ok()?);
+        let rec_len = u16::from_le_bytes(header.get(4..6)?.try_into().ok()?) as usize;
+        let name_len = header[6] as usize;
+        let entry_end = offset.checked_add(rec_len)?;
+        if rec_len < 8 || rec_len % 4 != 0 || entry_end > data.len() || name_len > rec_len - 8 {
+            return None;
+        }
+        Some((inode, rec_len, name_len))
     }
     
-    // Finds an inode by name starting from a parent directory inode
     fn find_in_dir(&self, dir_inode_num: u32, name: &str) -> Option<u32> {
         let inode_data = self.get_inode(dir_inode_num)?;
+        if !Self::inode_is_directory(&inode_data) { return None; }
         let data = self.read_inode_data(&inode_data)?;
         
         let mut offset = 0;
         while offset < data.len() {
-            let dir_entry = unsafe { &*(data.as_ptr().add(offset) as *const Ext4DirEntry) };
-            let rec_len = dir_entry.rec_len;
-            let name_len = dir_entry.name_len;
-            let inode = dir_entry.inode;
+            let (inode, rec_len, name_len) = Self::directory_entry(&data, offset)?;
             
             if inode != 0 && name_len > 0 {
-                let name_slice = &data[offset + 8..offset + 8 + name_len as usize];
+                let name_slice = data.get(offset + 8..offset + 8 + name_len)?;
                 if let Ok(name_str) = core::str::from_utf8(name_slice) {
                     if name_str == name {
                         return Some(inode);
@@ -263,8 +397,7 @@ impl Ext4Fs {
                 }
             }
             
-            if rec_len == 0 { break; }
-            offset += rec_len as usize;
+            offset = offset.checked_add(rec_len)?;
         }
         None
     }
@@ -272,7 +405,7 @@ impl Ext4Fs {
 
 impl FileSystem for Ext4Fs {
     fn read_file(&self, path: &str) -> Option<Vec<u8>> {
-        let mut current_inode = 2; // root inode
+        let mut current_inode = 2;
         let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
         
         for part in parts {
@@ -284,6 +417,7 @@ impl FileSystem for Ext4Fs {
         }
         
         let inode_data = self.get_inode(current_inode)?;
+        if Self::inode_is_directory(&inode_data) { return None; }
         self.read_inode_data(&inode_data)
     }
 
@@ -300,52 +434,57 @@ impl FileSystem for Ext4Fs {
         }
         
         let inode_data = self.get_inode(current_inode)?;
+        if !Self::inode_is_directory(&inode_data) { return None; }
         let data = self.read_inode_data(&inode_data)?;
         
         let mut list = Vec::new();
         let mut offset = 0;
         while offset < data.len() {
-            let dir_entry = unsafe { &*(data.as_ptr().add(offset) as *const Ext4DirEntry) };
-            let rec_len = dir_entry.rec_len;
-            let name_len = dir_entry.name_len;
-            let inode = dir_entry.inode;
+            let (inode, rec_len, name_len) = Self::directory_entry(&data, offset)?;
             
             if inode != 0 && name_len > 0 {
-                let name_slice = &data[offset + 8..offset + 8 + name_len as usize];
+                let name_slice = data.get(offset + 8..offset + 8 + name_len)?;
                 if let Ok(name_str) = core::str::from_utf8(name_slice) {
                     list.push(String::from(name_str));
                 }
             }
             
-            if rec_len == 0 { break; }
-            offset += rec_len as usize;
+            offset = offset.checked_add(rec_len)?;
         }
         Some(list)
     }
 }
 
-pub static mut EXT4: Option<Ext4Fs> = None;
+pub static EXT4: IrqSafeSpinlock<Option<Ext4Fs>> = IrqSafeSpinlock::new(None);
 
-pub fn init_from_primary_disk() {
-    unsafe {
-        if let Some(disk) = &PRIMARY_DISK {
-            if let Some(fs) = Ext4Fs::new(disk) {
-                crate::kprintln!("[ext4] Montado correctamente: Bloque {}, {} Inodos.", fs.block_size, fs.inodes_per_group);
-                
-                // Static allocation of the struct so we can pass a 'static reference to VFS
-                EXT4 = Some(fs);
-                crate::fs::vfs::VFS.lock().root_fs = EXT4.as_ref().map(|f| f as &'static dyn FileSystem);
-                
-                crate::kprintln!("[ext4] VFS root redirigido a Ext4.");
-                
-                // Let's test the new VFS integration
-                let vfs = crate::fs::vfs::VFS.lock();
-                if let Some(files) = vfs.root_fs.as_ref().unwrap().list_files("/") {
-                    crate::kprintln!("[ext4-vfs] Contenido de /: {:?}", files);
-                }
-            } else {
-                crate::kprintln!("[ext4] Falla al inicializar Ext4.");
-            }
-        }
+pub struct GlobalExt4Fs;
+impl FileSystem for GlobalExt4Fs {
+    fn read_file(&self, path: &str) -> Option<Vec<u8>> {
+        let mounted = EXT4.lock();
+        mounted.as_ref()?.read_file(path)
+    }
+    fn list_files(&self, path: &str) -> Option<Vec<String>> {
+        let mounted = EXT4.lock();
+        mounted.as_ref()?.list_files(path)
+    }
+}
+pub static GLOBAL_EXT4: GlobalExt4Fs = GlobalExt4Fs;
+
+pub fn is_mounted() -> bool {
+    EXT4.lock().is_some()
+}
+
+pub fn init_from_disk(disk: &'static dyn BlockDevice) {
+    if let Some(fs) = Ext4Fs::new(disk) {
+        crate::kprintln!("[ext4] Montado correctamente: Bloque {}, {} Inodos.", fs.block_size, fs.inodes_per_group);
+        
+        *EXT4.lock() = Some(fs);
+        crate::fs::vfs::VFS.lock().root_fs = Some(&GLOBAL_EXT4);
+        
+        crate::kprintln!("[ext4] VFS root redirigido a Ext4.");
+        
+        crate::kprintln!("[ext4-vfs] Contenido de /: {:?}", crate::fs::vfs::list_files("/"));
+    } else {
+        crate::kprintln!("[ext4] Falla al inicializar Ext4.");
     }
 }

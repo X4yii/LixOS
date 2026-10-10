@@ -40,7 +40,7 @@ pub fn init() {
         crate::kprintln!("[pmm] Max Phys Addr: {:#x} ({} frames)", max_phys_addr, total_frames);
         crate::kprintln!("[pmm] Bitmap Size: {} KB ({} frames)", bitmap_size / 1024, bitmap_frames);
 
-        let hhdm_offset = crate::HHDM_REQUEST.get_response().map(|r| r.offset()).unwrap_or(0xffff800000000000);
+        let hhdm_offset = crate::memory::address::hhdm_offset().get();
         let mut bitmap_addr = 0;
 
         for entry in entries.iter() {
@@ -65,6 +65,7 @@ pub fn init() {
         let mut allocator = BitmapAllocator {
             bitmap: bitmap_slice,
             total_frames,
+            usable_bytes: total_usable,
             free_frames: 0,
             last_idx: 0,
         };
@@ -98,9 +99,26 @@ pub fn free_frame(frame_idx: usize) {
     }
 }
 
+pub fn memory_stats() -> (u64, u64) {
+    ALLOCATOR.lock().as_ref().map_or((0, 0), |allocator| {
+        (allocator.usable_bytes, allocator.free_frames as u64 * PAGE_SIZE as u64)
+    })
+}
+
+pub fn alloc_contiguous_frames(count: usize) -> Option<usize> {
+    ALLOCATOR.lock().as_mut().and_then(|a| a.alloc_contiguous_frames(count))
+}
+
+pub fn free_contiguous_frames(start_frame: usize, count: usize) {
+    if let Some(a) = ALLOCATOR.lock().as_mut() {
+        a.free_contiguous_frames(start_frame, count);
+    }
+}
+
 struct BitmapAllocator {
     bitmap: &'static mut [u8],
     total_frames: usize,
+    usable_bytes: u64,
     free_frames: usize,
     last_idx: usize,
 }
@@ -175,6 +193,47 @@ impl BitmapAllocator {
             if frame < self.last_idx {
                 self.last_idx = frame;
             }
+        }
+    }
+
+    fn alloc_contiguous_frames(&mut self, count: usize) -> Option<usize> {
+        if count == 0 {
+            return None;
+        }
+        if count == 1 {
+            return self.alloc_frame();
+        }
+        if self.free_frames < count {
+            return None;
+        }
+
+        let mut consecutive = 0;
+        let mut start_idx = 0;
+
+        for i in 0..self.total_frames {
+            if !self.test_bit(i) {
+                if consecutive == 0 {
+                    start_idx = i;
+                }
+                consecutive += 1;
+                if consecutive == count {
+                    for f in start_idx..start_idx + count {
+                        self.set_bit(f);
+                    }
+                    self.free_frames -= count;
+                    return Some(start_idx);
+                }
+            } else {
+                consecutive = 0;
+            }
+        }
+
+        None
+    }
+
+    fn free_contiguous_frames(&mut self, start_frame: usize, count: usize) {
+        for i in 0..count {
+            self.free_frame(start_frame + i);
         }
     }
 }

@@ -1,0 +1,7 @@
+[package]
+name = "lix-storage"
+version = "0.0.1"
+edition = "2021"
+description = "Shared no_std block storage formats and validation for LixOS"
+
+[dependencies]

@@ -10,16 +10,11 @@ impl Command for HelpCommand {
         crate::kprintln!("  help, clear, ls, cat, ping, ltop, kill, pkill");
         
         crate::kprintln!("\nComandos disponibles en el PATH:");
-        let env = crate::shell::VANISH_ENV.lock();
-        let vfs = crate::fs::vfs::VFS.lock();
-        if let Some(fs) = &vfs.root_fs {
-            for path in env.paths.iter() {
-                if let Some(files) = fs.list_files(path) {
-                    for f in files {
-                        if f != "." && f != ".." {
-                            crate::kprintln!("  {} ({})", f, path);
-                        }
-                    }
+        let paths = crate::shell::VANISH_ENV.lock().paths.clone();
+        for path in paths {
+            for file in crate::fs::vfs::list_files(&path) {
+                if file != "." && file != ".." {
+                    crate::kprintln!("  {} ({})", file, path);
                 }
             }
         }

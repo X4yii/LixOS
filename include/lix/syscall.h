@@ -1,0 +1,56 @@
+#ifndef _LIX_SYSCALL_H
+#define _LIX_SYSCALL_H
+
+#include <stdint.h>
+
+#define SYS_ABI_VERSION 0x0
+
+#define SYS_HANDLE_CLOSE 0x1
+
+#define SYS_HANDLE_DUP 0x2
+
+#define SYS_REVOKER_CREATE 0x7
+
+#define SYS_REVOKER_REVOKE 0x8
+
+#define SYS_PROCESS_SPAWN 0x100
+
+#define SYS_PROCESS_EXIT 0x101
+
+#define SYS_VMO_CREATE 0x200
+
+#define SYS_VM_MAP 0x202
+
+#define SYS_DISPLAY_INFO 0x700
+
+#define SYS_DISPLAY_PRESENT 0x702
+
+#define SYS_LOG_WRITE 0x801
+
+#define SYS_PROCESS_KILL 0x102
+
+#define SYS_PROCESS_LIST 0x10c
+
+#define SYS_TERMINAL_INFO 0x703
+
+#define SYS_TERMINAL_SET_SCALE 0x704
+
+#define SYS_SET_KEYMAP 0x706
+
+#define SYS_GET_KEYMAP 0x707
+
+#define SYS_POWER 0x803
+
+#define SYS_MONITOR_METRICS 0x80a
+
+#define SYS_BLOCK_OPEN 0x820
+
+#define SYS_BLOCK_INFO 0x821
+
+#define SYS_BLOCK_READ 0x822
+
+#define SYS_BLOCK_WRITE 0x823
+
+#define SYS_BLOCK_SYNC 0x824
+
+#endif

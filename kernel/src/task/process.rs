@@ -14,7 +14,7 @@ pub enum ProcessState {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ProcessInfo {
     pub pid: u64,
     pub name: [u8; 16],
@@ -22,6 +22,7 @@ pub struct ProcessInfo {
     pub privilege_level: u8,
     pub cpu_ticks: u64,
     pub ram_bytes: u64,
+    pub disk_read_bytes: u64,
 }
 
 #[derive(Debug, Default)]
@@ -48,13 +49,19 @@ pub struct Process {
     
     pub cpu_ticks: u64,
     pub ram_bytes_used: u64,
+    pub disk_read_bytes: u64,
     pub gpu_context: u64,
 
-    // Signal Infrastructure
     pub pending_signals: u64,
+    pub waiting_for: Option<ProcessId>,
     pub kernel_stack_ptr: u64,
     pub pml4_frame: usize,
     pub privilege_level: u8,
+    pub handles: crate::task::handle::HandleTable,
+    pub priority: u8,
+    pub quantum_remaining: u8,
+    pub vma_mgr: crate::memory::vma::VmaManager,
+    pub affinity_mask: u64,
 }
 
 impl Process {
@@ -67,11 +74,19 @@ impl Process {
             cr3,
             cpu_ticks: 0,
             ram_bytes_used: 0,
+            disk_read_bytes: 0,
             gpu_context: 0,
             pending_signals: 0,
+            waiting_for: None,
             kernel_stack_ptr,
             pml4_frame,
             privilege_level,
+            handles: crate::task::handle::HandleTable::new(),
+            priority: 16,
+            quantum_remaining: 4,
+            vma_mgr: crate::memory::vma::VmaManager::new(),
+            affinity_mask: u64::MAX,
         }
     }
 }
+

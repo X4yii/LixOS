@@ -98,3 +98,104 @@ name = "sys_log_write"
 description = "Escribe texto en el búfer circular klog"
 args = [{ name = "buf_ptr", type = "u64" }, { name = "len", type = "u64" }]
 rights = "LOG"
+
+[[syscall]]
+id = 0x102
+name = "sys_process_kill"
+description = "Envía una señal POSIX a un proceso"
+args = [{ name = "pid", type = "u64" }, { name = "signal", type = "u32" }]
+rights = "MANAGE"
+
+[[syscall]]
+id = 0x10C
+name = "sys_process_list"
+description = "Enumera los procesos del sistema hacia un búfer de usuario"
+args = [{ name = "buffer", type = "u64" }, { name = "max_count", type = "u64" }]
+rights = "INSPECT"
+
+[[syscall]]
+id = 0x703
+name = "sys_terminal_info"
+description = "Consulta dimensiones y escala geométrica de la terminal activa"
+args = [{ name = "info_ptr", type = "u64" }]
+rights = "NONE"
+
+[[syscall]]
+id = 0x704
+name = "sys_terminal_set_scale"
+description = "Ajusta la escala tipográfica o zoom de la terminal"
+args = [{ name = "command", type = "u64" }]
+rights = "NONE"
+
+[[syscall]]
+id = 0x706
+name = "sys_set_keymap"
+description = "Configura la distribución activa del teclado PS/2"
+args = [{ name = "layout_id", type = "u8" }]
+rights = "DEVICES"
+
+[[syscall]]
+id = 0x707
+name = "sys_get_keymap"
+description = "Consulta la distribución activa del teclado PS/2"
+args = []
+rights = "NONE"
+
+[[syscall]]
+id = 0x803
+name = "sys_power"
+description = "Apagado y reinicio ordenado de la máquina"
+args = [{ name = "cmd", type = "u64" }]
+rights = "POWER"
+
+[[syscall]]
+id = 0x80A
+name = "sys_monitor_metrics"
+description = "Consulta telemetría del sistema (RAM, CPU ticks, métricas de E/S)"
+args = [{ name = "metrics_ptr", type = "u64" }]
+rights = "INSPECT"
+
+[[syscall]]
+id = 0x820
+name = "sys_block_open"
+description = "Adquiere un lease exclusivo sobre un dispositivo de bloques físico"
+args = [{ name = "device_index", type = "u64" }, { name = "flags", type = "u64" }]
+rights = "DEVICES"
+
+[[syscall]]
+id = 0x821
+name = "sys_block_info"
+description = "Consulta geometría y tamaño de bloque lógico del dispositivo"
+args = [{ name = "handle", type = "u64" }, { name = "info_ptr", type = "u64" }]
+rights = "READ"
+
+[[syscall]]
+id = 0x822
+name = "sys_block_read"
+description = "Lee bloques lógicos contiguos desde almacenamiento físico"
+args = [
+    { name = "handle", type = "u64" },
+    { name = "start_block", type = "u64" },
+    { name = "block_count", type = "u16" },
+    { name = "buf_ptr", type = "u64" }
+]
+rights = "READ"
+
+[[syscall]]
+id = 0x823
+name = "sys_block_write"
+description = "Escribe bloques lógicos contiguos a almacenamiento físico"
+args = [
+    { name = "handle", type = "u64" },
+    { name = "start_block", type = "u64" },
+    { name = "block_count", type = "u16" },
+    { name = "buf_ptr", type = "u64" }
+]
+rights = "WRITE"
+
+[[syscall]]
+id = 0x824
+name = "sys_block_sync"
+description = "Ejecuta Flush en la controladora para garantizar persistencia no volátil"
+args = [{ name = "handle", type = "u64" }]
+rights = "WRITE"

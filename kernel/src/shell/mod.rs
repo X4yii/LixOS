@@ -11,8 +11,7 @@ pub trait Command {
     fn execute(&self, args: &[&str]);
 }
 
-pub static CANCEL_REQUEST: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-pub static FOREGROUND_TASK: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+pub use crate::task::{CANCEL_REQUEST, FOREGROUND_TASK};
 
 pub struct VanishEnv {
     pub paths: Vec<String>,
@@ -56,7 +55,6 @@ pub fn execute_line(cmd_line: &str) {
         args = args[1..].to_vec();
     }
 
-    // Builtins implementation mapping
     let builtins: [&dyn Command; 7] = [
         &commands::help::HelpCommand,
         &commands::clear::ClearCommand,
@@ -74,39 +72,33 @@ pub fn execute_line(cmd_line: &str) {
         }
     }
 
-    // Try to resolve as an ELF executable
-    let env = VANISH_ENV.lock();
+    let search_paths = VANISH_ENV.lock().paths.clone();
     let mut target_path = None;
 
     if command_name.starts_with("./") || command_name.starts_with("/") {
         target_path = Some(command_name.to_string());
     } else {
-        let vfs = crate::fs::vfs::VFS.lock();
-        if let Some(fs) = &vfs.root_fs {
-            for p in env.paths.iter() {
-                if let Some(files) = fs.list_files(p) {
-                    let cmd_elf = alloc::format!("{}.elf", command_name);
-                    let found_name = if files.contains(&command_name.to_string()) {
-                        Some(command_name)
-                    } else if files.contains(&cmd_elf) {
-                        Some(cmd_elf.as_str())
-                    } else {
-                        None
-                    };
+        for p in search_paths.iter() {
+            let files = crate::fs::vfs::list_files(p);
+            let cmd_elf = alloc::format!("{}.elf", command_name);
+            let found_name = if files.iter().any(|file| file == command_name) {
+                Some(command_name)
+            } else if files.iter().any(|file| file == &cmd_elf) {
+                Some(cmd_elf.as_str())
+            } else {
+                None
+            };
 
-                    if let Some(name) = found_name {
-                        let base_p = if p == "/" { "" } else { p.as_str() };
-                        target_path = Some(alloc::format!("{}/{}", base_p, name));
-                        break;
-                    }
+            if let Some(name) = found_name {
+                let base_p = if p == "/" { "" } else { p.as_str() };
+                target_path = Some(alloc::format!("{}/{}", base_p, name));
+                break;
                 }
-            }
         }
     }
 
     if let Some(path) = target_path {
-        let vfs = crate::fs::vfs::VFS.lock();
-        if let Some(file_data) = vfs.read_file(&path) {
+        if let Some(file_data) = crate::fs::vfs::read_file(&path) {
             match crate::task::elf::load_elf(&file_data, &path, privilege) {
                 Ok(pid) => {
                     FOREGROUND_TASK.store(pid, core::sync::atomic::Ordering::SeqCst);
@@ -114,14 +106,7 @@ pub fn execute_line(cmd_line: &str) {
                         if FOREGROUND_TASK.load(core::sync::atomic::Ordering::SeqCst) != pid { break; }
                         let is_alive = {
                             let sched = crate::task::scheduler::SCHEDULER.lock();
-                            let mut found = false;
-                            for p in sched.processes.iter() {
-                                if p.id.0 == pid { found = true; break; }
-                            }
-                            if let Some(ref p) = sched.current {
-                                if p.id.0 == pid { found = true; }
-                            }
-                            found
+                            sched.is_process_alive(pid)
                         };
                         if !is_alive {
                             FOREGROUND_TASK.store(0, core::sync::atomic::Ordering::SeqCst);

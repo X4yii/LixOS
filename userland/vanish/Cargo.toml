@@ -6,3 +6,10 @@ description = "Official shell and scripting environment for LixOS"
 
 [dependencies]
 lix-sys = { path = "../../libs/lix-sys" }
+sys-libc = { path = "../../libs/sys-libc" }
+linked_list_allocator = "0.10.5"
+
+[[bin]]
+name = "vanish"
+path = "src/main.rs"
+test = false
