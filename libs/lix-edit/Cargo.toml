@@ -1,0 +1,11 @@
+[package]
+name = "lix-edit"
+version = "0.0.2"
+edition = "2024"
+description = "Shared no_std text editor core for LixOS"
+
+[dependencies]
+sys-libc = { path = "../sys-libc" }
+
+[lints]
+workspace = true

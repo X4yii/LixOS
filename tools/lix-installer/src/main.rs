@@ -2,15 +2,11 @@ mod disk;
 mod fat32;
 mod image;
 mod plan;
-
-use std::env;
-use std::path::Path;
-
 use disk::{guid_string, inspect_image, DiskSnapshot};
 use plan::{plan_for, InstallMode, InstallPlan};
-
+use std::env;
+use std::path::Path;
 const DEFAULT_BLOCK_SIZE: u32 = 512;
-
 fn help() {
     println!("lix-installer — auditoría de imágenes GPT y planificador offline (solo lectura)");
     println!("\nUso:");
@@ -22,9 +18,8 @@ fn help() {
     println!("\n'image' solo crea imágenes raw nuevas; rechaza rutas existentes y nunca abre nodos de dispositivo.");
     println!("No hay todavía aplicación a discos físicos ni recuperación transaccional desde el LiveISO.");
 }
-
 fn show_disk(disk: &DiskSnapshot) {
-    let bytes = disk.block_count.saturating_mul(disk.block_size as u64);
+    let bytes = disk.block_count.saturating_mul(u64::from(disk.block_size));
     println!(
         "Disco: {} bytes ({} bloques × {} B)",
         bytes, disk.block_count, disk.block_size
@@ -50,7 +45,6 @@ fn show_disk(disk: &DiskSnapshot) {
         );
     }
 }
-
 fn show_plan(path: &str, disk: &DiskSnapshot, plan: &InstallPlan) {
     println!("\nPLAN — solo lectura; no se ha escrito nada");
     println!("Destino: {path}");
@@ -81,7 +75,10 @@ fn show_plan(path: &str, disk: &DiskSnapshot, plan: &InstallPlan) {
         println!("ESP: reutilizar {}, nunca formatear", guid_string(esp_guid));
     }
     for partition in &plan.partitions_to_create {
-        let mib = partition.blocks().saturating_mul(disk.block_size as u64) / (1024 * 1024);
+        let mib = partition
+            .blocks()
+            .saturating_mul(u64::from(disk.block_size))
+            / (1024 * 1024);
         println!(
             "Crear {}: LBA {}..{} ({} MiB), tipo {}",
             partition.name,
@@ -97,7 +94,6 @@ fn show_plan(path: &str, disk: &DiskSnapshot, plan: &InstallPlan) {
     );
     println!("Sin resize, particionado manual ni escritura. Revisión humana obligatoria antes de una futura fase apply.");
 }
-
 fn parse_block_size(value: Option<&String>) -> Result<u32, String> {
     match value {
         Some(value) => value
@@ -106,7 +102,6 @@ fn parse_block_size(value: Option<&String>) -> Result<u32, String> {
         None => Ok(DEFAULT_BLOCK_SIZE),
     }
 }
-
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -192,7 +187,6 @@ fn run() -> Result<(), String> {
         }
     }
 }
-
 fn main() {
     if let Err(error) = run() {
         eprintln!("lix-installer: {error}");

@@ -12,3 +12,6 @@ linked_list_allocator = "0.10.5"
 name = "ltop"
 path = "src/main.rs"
 test = false
+
+[lints]
+workspace = true

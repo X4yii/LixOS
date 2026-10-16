@@ -1,11 +1,12 @@
 [package]
 name = "vanish"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "Official shell and scripting environment for LixOS"
 
 [dependencies]
 lix-sys = { path = "../../libs/lix-sys" }
+lix-edit = { path = "../../libs/lix-edit" }
 sys-libc = { path = "../../libs/sys-libc" }
 linked_list_allocator = "0.10.5"
 
@@ -13,3 +14,6 @@ linked_list_allocator = "0.10.5"
 name = "vanish"
 path = "src/main.rs"
 test = false
+
+[lints]
+workspace = true

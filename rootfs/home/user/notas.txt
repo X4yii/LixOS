@@ -1,0 +1,2 @@
+Bienvenido a LixOS.
+Este es tu directorio personal /home/user.

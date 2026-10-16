@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-
+use std::process::Command;
 #[derive(Debug, Clone)]
 pub struct SyscallDef {
     pub id: u64,
@@ -8,7 +8,6 @@ pub struct SyscallDef {
     pub description: String,
     pub rights: String,
 }
-
 pub fn run() {
     println!("[xtask codegen] Procesando abi/syscalls.toml...");
     let toml_path = Path::new("abi/syscalls.toml");
@@ -19,22 +18,22 @@ pub fn run() {
             std::process::exit(1);
         }
     };
-
     let syscalls = parse_syscalls(&content);
-    println!("[xtask codegen] {} syscalls encontradas en abi/syscalls.toml.", syscalls.len());
-
+    println!(
+        "[xtask codegen] {} syscalls encontradas en abi/syscalls.toml.",
+        syscalls.len()
+    );
     generate_kernel_syscall_table(&syscalls);
     generate_c_header(&syscalls);
+    generate_lix_sys_constants(&syscalls);
     println!("[xtask codegen] Generación de código de ABI finalizada con éxito.");
 }
-
 fn parse_syscalls(content: &str) -> Vec<SyscallDef> {
     let mut defs = Vec::new();
     let mut current_id = None;
     let mut current_name = None;
     let mut current_desc = None;
     let mut current_rights = None;
-
     let flush_entry = |defs: &mut Vec<SyscallDef>,
                        id: &mut Option<u64>,
                        name: &mut Option<String>,
@@ -49,14 +48,18 @@ fn parse_syscalls(content: &str) -> Vec<SyscallDef> {
             });
         }
     };
-
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed == "[[syscall]]" {
-            flush_entry(&mut defs, &mut current_id, &mut current_name, &mut current_desc, &mut current_rights);
+            flush_entry(
+                &mut defs,
+                &mut current_id,
+                &mut current_name,
+                &mut current_desc,
+                &mut current_rights,
+            );
             continue;
         }
-
         if let Some((k, v)) = trimmed.split_once('=') {
             let key = k.trim();
             let val = v.trim();
@@ -82,15 +85,17 @@ fn parse_syscalls(content: &str) -> Vec<SyscallDef> {
             }
         }
     }
-
-    flush_entry(&mut defs, &mut current_id, &mut current_name, &mut current_desc, &mut current_rights);
+    flush_entry(
+        &mut defs,
+        &mut current_id,
+        &mut current_name,
+        &mut current_desc,
+        &mut current_rights,
+    );
     defs
 }
-
 fn generate_kernel_syscall_table(syscalls: &[SyscallDef]) {
     let mut out = String::new();
-    out.push_str("//! ARCHIVO GENERADO AUTOMÁTICAMENTE POR `cargo xtask codegen`\n");
-    out.push_str("//! NO EDITAR DIRECTAMENTE. Fuente de la verdad: `abi/syscalls.toml`.\n\n");
     out.push_str("#[derive(Debug, Clone, Copy)]\n");
     out.push_str("pub struct SyscallEntry {\n");
     out.push_str("    pub id: u64,\n");
@@ -98,7 +103,6 @@ fn generate_kernel_syscall_table(syscalls: &[SyscallDef]) {
     out.push_str("    pub description: &'static str,\n");
     out.push_str("    pub required_rights: &'static str,\n");
     out.push_str("}\n\n");
-
     out.push_str("pub const SYSCALL_REGISTRY: &[SyscallEntry] = &[\n");
     for s in syscalls {
         out.push_str(&format!(
@@ -107,38 +111,69 @@ fn generate_kernel_syscall_table(syscalls: &[SyscallDef]) {
         ));
     }
     out.push_str("];\n\n");
-
-    out.push_str("/// Consulta el nombre y descripción de una syscall por su número de llamada.\n");
     out.push_str("pub fn lookup_syscall(id: u64) -> Option<&'static SyscallEntry> {\n");
     out.push_str("    SYSCALL_REGISTRY.iter().find(|e| e.id == id)\n");
     out.push_str("}\n");
-
     let dest = Path::new("kernel/src/task/syscall_table.rs");
     if let Err(e) = fs::write(dest, out) {
         eprintln!("[xtask codegen] Error escribiendo {}: {e}", dest.display());
     } else {
+        rustfmt(dest);
         println!("[xtask codegen] {} generado exitosamente.", dest.display());
     }
 }
-
+fn rustfmt(path: &Path) {
+    let status = Command::new("rustfmt")
+        .args(["--edition", "2021"])
+        .arg(path)
+        .status();
+    match status {
+        Ok(status) if status.success() => {}
+        Ok(status) => eprintln!(
+            "[xtask codegen] AVISO: rustfmt terminó con {status}; {} puede quedar sin formatear",
+            path.display()
+        ),
+        Err(error) => eprintln!(
+            "[xtask codegen] AVISO: no se pudo ejecutar rustfmt ({error}); {} puede quedar sin formatear",
+            path.display()
+        ),
+    }
+}
+fn syscall_const_name(name: &str) -> String {
+    name.to_ascii_uppercase()
+}
+fn generate_lix_sys_constants(syscalls: &[SyscallDef]) {
+    let mut out = String::new();
+    for s in syscalls {
+        out.push_str(&format!(
+            "pub const {}: usize = {:#x};\n",
+            syscall_const_name(&s.name),
+            s.id
+        ));
+    }
+    let dest = Path::new("libs/lix-sys/src/syscalls.rs");
+    if let Err(e) = fs::write(dest, out) {
+        eprintln!("[xtask codegen] Error escribiendo {}: {e}", dest.display());
+    } else {
+        rustfmt(dest);
+        println!("[xtask codegen] {} generado exitosamente.", dest.display());
+    }
+}
 fn generate_c_header(syscalls: &[SyscallDef]) {
     let mut out = String::new();
-    out.push_str("/* ARCHIVO GENERADO AUTOMÁTICAMENTE POR `cargo xtask codegen` */\n");
-    out.push_str("/* NO EDITAR DIRECTAMENTE. Fuente de la verdad: `abi/syscalls.toml`. */\n");
     out.push_str("#ifndef _LIX_SYSCALL_H\n");
     out.push_str("#define _LIX_SYSCALL_H\n\n");
     out.push_str("#include <stdint.h>\n\n");
-
     for s in syscalls {
-        let macro_name = s.name.to_ascii_uppercase();
-        out.push_str(&format!("/* {} */\n", s.description));
-        out.push_str(&format!("#define {} {:#x}\n\n", macro_name, s.id));
+        let macro_name = syscall_const_name(&s.name);
+        out.push_str(&format!("#define {} {:#x}\n", macro_name, s.id));
     }
-
-    out.push_str("#endif /* _LIX_SYSCALL_H */\n");
-
+    out.push_str("\n#endif\n");
     let dir = Path::new("include/lix");
-    let _ = fs::create_dir_all(dir);
+    if let Err(e) = fs::create_dir_all(dir) {
+        eprintln!("[xtask codegen] Error creando {}: {e}", dir.display());
+        std::process::exit(1);
+    }
     let dest = dir.join("syscall.h");
     if let Err(e) = fs::write(&dest, out) {
         eprintln!("[xtask codegen] Error escribiendo {}: {e}", dest.display());

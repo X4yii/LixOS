@@ -1,8 +1,11 @@
 [package]
 name = "lix-installer"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "Transactional non-destructive installer for LixOS"
 
 [dependencies]
 lix-storage = { path = "../../libs/lix-storage" }
+
+[lints]
+workspace = true

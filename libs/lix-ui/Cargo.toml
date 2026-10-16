@@ -1,8 +1,0 @@
-[package]
-name = "lix-ui"
-version = "0.0.1"
-edition = "2021"
-description = "Official UI toolkit for LixOS graphical applications"
-
-[dependencies]
-lix-sys = { path = "../lix-sys" }

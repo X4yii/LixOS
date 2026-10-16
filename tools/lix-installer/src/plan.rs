@@ -1,23 +1,16 @@
 use crate::disk::DiskSnapshot;
-
-pub const ESP_TYPE_GUID: [u8; 16] = [
-    0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11, 0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B,
-];
-pub const LINUX_FILESYSTEM_GUID: [u8; 16] = [
-    0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47, 0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4,
-];
+pub use lix_storage::{
+    EFI_SYSTEM_PARTITION_TYPE_GUID as ESP_TYPE_GUID,
+    LINUX_FILESYSTEM_TYPE_GUID as LINUX_FILESYSTEM_GUID,
+};
 const MIB: u64 = 1024 * 1024;
 const MIN_ROOT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const ESP_BYTES: u64 = 512 * MIB;
-const ENTRY_COUNT: u64 = 128;
-const ENTRY_SIZE: u64 = 128;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InstallMode {
     WholeDisk,
     FreeSpace,
 }
-
 #[derive(Clone, Debug)]
 pub struct PlannedPartition {
     pub name: &'static str,
@@ -25,13 +18,11 @@ pub struct PlannedPartition {
     pub first_lba: u64,
     pub last_lba: u64,
 }
-
 impl PlannedPartition {
-    pub fn blocks(&self) -> u64 {
+    pub const fn blocks(&self) -> u64 {
         self.last_lba - self.first_lba + 1
     }
 }
-
 #[derive(Clone, Debug)]
 pub struct InstallPlan {
     pub mode: InstallMode,
@@ -41,16 +32,14 @@ pub struct InstallPlan {
     pub preserved_partitions: Vec<[u8; 16]>,
     pub partitions_to_create: Vec<PlannedPartition>,
 }
-
 fn align_up(value: u64, alignment: u64) -> Option<u64> {
     value
         .checked_add(alignment - 1)
         .map(|v| v / alignment * alignment)
 }
-
 fn validate_geometry(disk: &DiskSnapshot) -> Result<(u64, u64), String> {
-    let block_size = disk.block_size as u64;
-    if block_size < 512 || !block_size.is_power_of_two() || MIB % block_size != 0 {
+    let block_size = u64::from(disk.block_size);
+    if block_size < 512 || !block_size.is_power_of_two() || !MIB.is_multiple_of(block_size) {
         return Err("unsupported disk logical block size".into());
     }
     let mib_blocks = MIB / block_size;
@@ -86,10 +75,9 @@ fn validate_geometry(disk: &DiskSnapshot) -> Result<(u64, u64), String> {
     }
     Ok((mib_blocks, min_root))
 }
-
 pub fn plan_whole_disk(disk: &DiskSnapshot) -> Result<InstallPlan, String> {
     let (alignment, min_root) = validate_geometry(disk)?;
-    let table_blocks = (ENTRY_COUNT * ENTRY_SIZE).div_ceil(disk.block_size as u64);
+    let table_blocks = lix_storage::GPT_ENTRY_TABLE_BYTES.div_ceil(u64::from(disk.block_size));
     let backup_entries = disk
         .block_count
         .checked_sub(table_blocks + 1)
@@ -97,7 +85,7 @@ pub fn plan_whole_disk(disk: &DiskSnapshot) -> Result<InstallPlan, String> {
     let last_usable = backup_entries
         .checked_sub(1)
         .ok_or("disk too small for GPT")?;
-    let esp_blocks = ESP_BYTES.div_ceil(disk.block_size as u64);
+    let esp_blocks = ESP_BYTES.div_ceil(u64::from(disk.block_size));
     let esp_start = alignment.max(2 + table_blocks);
     let esp_last = esp_start
         .checked_add(esp_blocks - 1)
@@ -132,7 +120,6 @@ pub fn plan_whole_disk(disk: &DiskSnapshot) -> Result<InstallPlan, String> {
         ],
     })
 }
-
 fn free_extents(disk: &DiskSnapshot) -> Vec<(u64, u64)> {
     let mut parts = disk.partitions.iter().collect::<Vec<_>>();
     parts.sort_unstable_by_key(|p| p.first_lba);
@@ -149,7 +136,6 @@ fn free_extents(disk: &DiskSnapshot) -> Vec<(u64, u64)> {
     }
     gaps
 }
-
 pub fn plan_free_space(disk: &DiskSnapshot) -> Result<InstallPlan, String> {
     let (alignment, min_root) = validate_geometry(disk)?;
     let mut esps = disk
@@ -192,19 +178,16 @@ pub fn plan_free_space(disk: &DiskSnapshot) -> Result<InstallPlan, String> {
         }],
     })
 }
-
 pub fn plan_for(mode: InstallMode, disk: &DiskSnapshot) -> Result<InstallPlan, String> {
     match mode {
         InstallMode::WholeDisk => plan_whole_disk(disk),
         InstallMode::FreeSpace => plan_free_space(disk),
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use lix_storage::GptPartition;
-
     fn empty_disk() -> DiskSnapshot {
         DiskSnapshot {
             block_size: 512,
@@ -215,7 +198,6 @@ mod tests {
             partitions: Vec::new(),
         }
     }
-
     #[test]
     fn whole_disk_layout_aligns_esp_and_root_and_marks_erase() {
         let plan = plan_whole_disk(&empty_disk()).unwrap();
@@ -224,7 +206,6 @@ mod tests {
         assert_eq!(plan.partitions_to_create[0].blocks(), ESP_BYTES / 512);
         assert_eq!(plan.partitions_to_create[1].first_lba % 2048, 0);
     }
-
     #[test]
     fn free_space_plan_keeps_existing_partitions_and_esp() {
         let mut disk = empty_disk();
@@ -249,7 +230,6 @@ mod tests {
         assert_eq!(plan.preserved_partitions.len(), 2);
         assert!(plan.partitions_to_create[0].first_lba > 1_500_000);
     }
-
     #[test]
     fn free_space_mode_refuses_missing_esp() {
         assert!(plan_free_space(&empty_disk()).is_err());

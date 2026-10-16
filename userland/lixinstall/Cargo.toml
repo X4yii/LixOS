@@ -1,0 +1,20 @@
+[package]
+name = "lixinstall"
+version = "0.0.2"
+edition = "2021"
+description = "TUI installer for LixOS"
+
+[dependencies]
+lix-sys = { path = "../../libs/lix-sys" }
+sys-libc = { path = "../../libs/sys-libc" }
+lix-storage = { path = "../../libs/lix-storage" }
+litui = { path = "../../libs/litui/litui", default-features = false }
+linked_list_allocator = "0.10.5"
+
+[[bin]]
+name = "lixinstall"
+path = "src/main.rs"
+test = false
+
+[lints]
+workspace = true

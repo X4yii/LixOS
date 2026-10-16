@@ -1,11 +1,14 @@
 [package]
 name = "kernel"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 
 [dependencies]
 lix-sys = { path = "../libs/lix-sys" }
 lix-storage = { path = "../libs/lix-storage" }
+lix-net = { path = "../libs/lix-net" }
+lix-usb = { path = "../libs/lix-usb" }
+lix-wifi = { path = "../libs/lix-wifi" }
 spin = "0.9"
 limine = "0.5"
 linked_list_allocator = "0.10.6"
@@ -14,9 +17,13 @@ pic8259 = "0.11.0"
 pc-keyboard = "0.9.0"
 lazy_static = { version = "1.5", features = ["spin_no_std"] }
 xmas-elf = { version = "0.10.0", default-features = false }
+lz4_flex = { version = "0.14.0", default-features = false, features = ["alloc", "safe-encode", "safe-decode"] }
 
 [[bin]]
 name = "kernel"
 path = "src/main.rs"
-test = false
+test = true
 
+
+[lints]
+workspace = true

@@ -1,10 +1,9 @@
 use super::super::Command;
-
 pub struct LsCommand;
-
 impl Command for LsCommand {
-    fn name(&self) -> &str { "ls" }
-
+    fn name(&self) -> &str {
+        "ls"
+    }
     fn execute(&self, args: &[&str]) {
         let path = if args.is_empty() { "/" } else { args[0] };
         let files = crate::fs::vfs::list_files(path);

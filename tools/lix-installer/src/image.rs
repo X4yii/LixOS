@@ -1,20 +1,15 @@
+use crate::disk::{guid_string, inspect_image, FileBlockWriter};
+use crate::fat32::{format_esp, EspFiles};
+use crate::plan::{ESP_TYPE_GUID, LINUX_FILESYSTEM_GUID};
+use lix_storage::{build_gpt_image, ext4_mkfs_args, write_gpt_layout, GptPartition};
 use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-use lix_storage::{build_gpt_image, GptPartition};
-
-use crate::disk::{guid_string, inspect_image};
-use crate::fat32::{format_esp, EspFiles};
-use crate::plan::{ESP_TYPE_GUID, LINUX_FILESYSTEM_GUID};
-
 const ESP_MIB: u64 = 512;
 const GIB_BYTES: u64 = 1024 * 1024 * 1024;
-const GPT_ENTRY_TABLE_BYTES: u64 = 128 * 128;
 const MAX_BOOT_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
-
 fn validate_output_parent(output: &Path) -> Result<(PathBuf, PathBuf), String> {
     let parent = output
         .parent()
@@ -41,7 +36,6 @@ fn validate_output_parent(output: &Path) -> Result<(PathBuf, PathBuf), String> {
     let filename = output.file_name().ok_or("output must include a filename")?;
     Ok((canonical_parent.clone(), canonical_parent.join(filename)))
 }
-
 fn random_guid() -> Result<[u8; 16], String> {
     let mut guid = [0u8; 16];
     File::open("/dev/urandom")
@@ -51,14 +45,6 @@ fn random_guid() -> Result<[u8; 16], String> {
     guid[8] = (guid[8] & 0x3F) | 0x80;
     Ok(guid)
 }
-
-fn write_at(file: &mut File, offset: u64, content: &[u8]) -> Result<(), String> {
-    use std::io::{Seek, SeekFrom, Write};
-    file.seek(SeekFrom::Start(offset))
-        .map_err(|error| error.to_string())?;
-    file.write_all(content).map_err(|error| error.to_string())
-}
-
 fn source_size(path: &Path, label: &str) -> Result<u64, String> {
     let metadata = fs::symlink_metadata(path).map_err(|error| format!("{label}: {error}"))?;
     if !metadata.file_type().is_file() {
@@ -66,7 +52,6 @@ fn source_size(path: &Path, label: &str) -> Result<u64, String> {
     }
     Ok(metadata.len())
 }
-
 fn make_ext4(
     image_path: &Path,
     root_offset: u64,
@@ -75,21 +60,19 @@ fn make_ext4(
 ) -> Result<(), String> {
     let offset = format!("offset={root_offset}");
     let blocks = root_blocks_4k.to_string();
+    let image = image_path.to_str().ok_or("ruta de imagen inválida")?;
+    let rootfs = rootfs.to_str().ok_or("ruta rootfs inválida")?;
     let status = Command::new("mkfs.ext4")
-        .args([
-            "-q", "-F", "-b", "4096", "-O",
-            "extents,uninit_bg,dir_index,filetype,has_journal,^64bit,^flex_bg,^ea_inode,^metadata_csum,^metadata_csum_seed",
-            "-d", rootfs.to_str().ok_or("ruta rootfs inválida")?, "-E", &offset,
-            image_path.to_str().ok_or("ruta de imagen inválida")?, &blocks,
-        ])
+        .args(ext4_mkfs_args(rootfs, &offset, image, &blocks))
         .status()
         .map_err(|error| format!("mkfs.ext4: {error}"))?;
     if !status.success() {
-        return Err("mkfs.ext4 falló al preparar la partición raíz".into());
+        return Err(format!(
+            "mkfs.ext4 falló al preparar la partición raíz: estado {status}"
+        ));
     }
     Ok(())
 }
-
 fn populate_image(
     file: &mut File,
     image_path: &Path,
@@ -100,7 +83,7 @@ fn populate_image(
     bootloader: &[u8],
     rootfs: &Path,
 ) -> Result<[u8; 16], String> {
-    let block_size = logical_block_size as u64;
+    let block_size = u64::from(logical_block_size);
     let total_blocks = size_gib
         .checked_mul(GIB_BYTES / block_size)
         .ok_or("image size overflow")?;
@@ -111,7 +94,7 @@ fn populate_image(
     let esp_start = alignment_blocks;
     let esp_blocks = ESP_MIB * 1024 * 1024 / block_size;
     let root_start = (esp_start + esp_blocks).div_ceil(alignment_blocks) * alignment_blocks;
-    let table_blocks = GPT_ENTRY_TABLE_BYTES.div_ceil(block_size);
+    let table_blocks = lix_storage::GPT_ENTRY_TABLE_BYTES.div_ceil(block_size);
     let last_usable = total_blocks
         .checked_sub(table_blocks + 2)
         .ok_or("image is too small for GPT")?;
@@ -136,17 +119,8 @@ fn populate_image(
     ];
     let gpt = build_gpt_image(logical_block_size, total_blocks, disk_guid, &partitions)
         .map_err(|error| format!("GPT generation: {error:?}"))?;
-    write_at(file, 0, &gpt.protective_mbr)?;
-    write_at(file, block_size, &gpt.primary_header)?;
-    write_at(file, 2 * block_size, &gpt.primary_entries)?;
-    write_at(
-        file,
-        gpt.backup_entries_lba * block_size,
-        &gpt.backup_entries,
-    )?;
-    write_at(file, (total_blocks - 1) * block_size, &gpt.backup_header)?;
+    write_gpt_layout(&mut FileBlockWriter(file), &gpt, block_size, total_blocks)?;
     file.sync_all().map_err(|error| error.to_string())?;
-
     let config = format!(
         "timeout: 3\n\n/LixOS\n    protocol: limine\n    kernel_path: boot():/KERNEL.ELF\n    module_path: boot():/INITRD.TAR\n    cmdline: root=PARTUUID={}\n",
         guid_string(root_guid)
@@ -157,7 +131,7 @@ fn populate_image(
         esp_start * block_size,
         esp_blocks * block_size,
         u32::try_from(esp_start).map_err(|_| "ESP start exceeds FAT32 BPB range")?,
-        u32::from_le_bytes(disk_guid[..4].try_into().unwrap()),
+        u32::from_le_bytes([disk_guid[0], disk_guid[1], disk_guid[2], disk_guid[3]]),
         EspFiles {
             bootloader,
             config: config.as_bytes(),
@@ -165,7 +139,6 @@ fn populate_image(
             initrd,
         },
     )?;
-
     let root_offset = root_start * block_size;
     let root_blocks_4k = (last_usable - root_start + 1) * block_size / 4096;
     make_ext4(image_path, root_offset, root_blocks_4k, rootfs)?;
@@ -180,8 +153,6 @@ fn populate_image(
     }
     Ok(root_guid)
 }
-
-/// Builds a bootable raw image without ever opening an existing path for writing.
 pub fn create_bootable_image(
     output: &Path,
     size_gib: u64,
@@ -191,7 +162,7 @@ pub fn create_bootable_image(
     bootloader_path: &Path,
     rootfs: &Path,
 ) -> Result<String, String> {
-    if size_gib < 4 || size_gib > 128 {
+    if !(4..=128).contains(&size_gib) {
         return Err("image size must be between 4 and 128 GiB".into());
     }
     if !matches!(logical_block_size, 512 | 4096) {

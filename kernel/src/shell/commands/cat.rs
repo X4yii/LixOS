@@ -1,10 +1,9 @@
 use super::super::Command;
-
 pub struct CatCommand;
-
 impl Command for CatCommand {
-    fn name(&self) -> &str { "cat" }
-
+    fn name(&self) -> &str {
+        "cat"
+    }
     fn execute(&self, args: &[&str]) {
         if args.is_empty() {
             crate::kprintln!("Uso: cat <archivo>");

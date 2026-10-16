@@ -1,8 +1,11 @@
 [package]
 name = "pml"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "Program Manager Linx - package manager for LixOS"
 
 [dependencies]
 lix-sys = { path = "../../libs/lix-sys" }
+
+[lints]
+workspace = true

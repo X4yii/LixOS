@@ -1,0 +1,19 @@
+[package]
+name = "edit"
+version = "0.0.2"
+edition = "2021"
+description = "Modeless TUI text editor for LixOS"
+
+[dependencies]
+lix-sys = { path = "../../libs/lix-sys" }
+lix-edit = { path = "../../libs/lix-edit" }
+sys-libc = { path = "../../libs/sys-libc" }
+linked_list_allocator = "0.10.5"
+
+[[bin]]
+name = "edit"
+path = "src/main.rs"
+test = false
+
+[lints]
+workspace = true

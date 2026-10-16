@@ -6,21 +6,28 @@ members = [
     "kernel",
     "libs/lix-sys",
     "libs/lix-storage",
+    "libs/lix-net",
+    "libs/lix-wifi",
+    "libs/lix-bluetooth",
+    "libs/lix-usb",
     "libs/sys-libc",
-    "libs/lix-ui",
+    "libs/lix-edit",
     "services/authd",
+    "services/netmgr",
+    "services/bluetoothd",
     "services/lix-compositor",
     "userland/vanish",
-    "userland/lix-shell",
+    "userland/edit",
     "pkg/pml",
     "tools/lix-installer",
     "tools/lix-mkiso",
     "userland/ltop",
+    "userland/lixinstall",
 ]
 
 [workspace.package]
-version = "0.0.1"
-license = "MIT"
+version = "0.0.2"
+license = "GPL-2.0-only"
 edition = "2024"
 rust-version = "1.85.0"
 exclude = []
@@ -84,42 +91,98 @@ unicode-truncate = { version = "3", default-features = false }
 unicode-width = ">=0.2.0"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
+unfulfilled_lint_expectations = "allow"
+unused_parens = "allow"
 
 [workspace.lints.clippy]
+pedantic = { level = "allow", priority = -1 }
 cast_possible_truncation = "allow"
 cast_possible_wrap = "allow"
 cast_precision_loss = "allow"
 cast_sign_loss = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+missing_safety_doc = "allow"
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
-pedantic = { level = "warn", priority = -1 }
-
 module_inception = "allow"
+doc_markdown = "allow"
+too_many_lines = "allow"
+too_many_arguments = "allow"
+struct_excessive_bools = "allow"
+fn_params_excessive_bools = "allow"
+similar_names = "allow"
+unreadable_literal = "allow"
+inline_always = "allow"
+ptr_as_ptr = "allow"
+as_ptr_cast_mut = "allow"
+wildcard_imports = "allow"
+manual_let_else = "allow"
+items_after_statements = "allow"
+used_underscore_binding = "allow"
+no_effect_underscore_binding = "allow"
+needless_range_loop = "allow"
+needless_continue = "allow"
+single_match = "allow"
+single_match_else = "allow"
+collapsible_if = "allow"
+match_same_arms = "allow"
+redundant_else = "allow"
+map_unwrap_or = "allow"
+manual_range_contains = "allow"
+wrong_self_convention = "allow"
+uninlined_format_args = "allow"
+return_self_not_must_use = "allow"
+unused_self = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+redundant_closure_for_method_calls = "allow"
+map_err_ignore = "allow"
+else_if_without_else = "allow"
+as_underscore = "allow"
+mod_module_files = "allow"
+deref_by_slicing = "allow"
+format_push_string = "allow"
+string_slice = "allow"
+needless_raw_strings = "allow"
+manual_checked_ops = "allow"
+missing_const_for_fn = "allow"
+use_self = "allow"
+chunks_exact_to_as_chunks = "allow"
+incompatible_msrv = "allow"
+empty_loop = "allow"
+needless_else = "allow"
+new_without_default = "allow"
+double_parens = "allow"
+identity_op = "allow"
+question_mark = "allow"
+ptr_arg = "allow"
+explicit_counter_loop = "allow"
+manual_is_ascii_check = "allow"
+unnecessary_sort_by = "allow"
+fn_to_numeric_cast_any = "allow"
+result_unit_err = "allow"
+unnecessary_cast = "allow"
+unnecessary_map_or = "allow"
+manual_flatten = "allow"
+or_fun_call = "allow"
+needless_pass_by_ref_mut = "allow"
+redundant_guards = "allow"
+precedence = "allow"
+int_plus_one = "allow"
+manual_clamp = "allow"
+while_let_loop = "allow"
+new_ret_no_self = "allow"
 
-as_underscore = "warn"
-deref_by_slicing = "warn"
-else_if_without_else = "warn"
 empty_line_after_doc_comments = "warn"
 equatable_if_let = "warn"
-fn_to_numeric_cast_any = "warn"
-format_push_string = "warn"
 implicit_clone = "warn"
-map_err_ignore = "warn"
-missing_const_for_fn = "warn"
 mixed_read_write_in_expression = "warn"
-mod_module_files = "warn"
-needless_pass_by_ref_mut = "warn"
-needless_raw_strings = "warn"
-or_fun_call = "warn"
 redundant_type_annotations = "warn"
 rest_pat_in_fully_bound_structs = "warn"
 string_lit_chars_any = "warn"
-string_slice = "warn"
 unnecessary_self_imports = "warn"
-use_self = "warn"
 
 [profile.bench]
 codegen-units = 1
