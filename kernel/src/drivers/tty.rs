@@ -1,16 +1,11 @@
-use alloc::collections::VecDeque;
 use crate::sync::IrqSafeSpinlock;
-use lazy_static::lazy_static;
+use alloc::collections::VecDeque;
 use core::sync::atomic::Ordering;
-
+use lazy_static::lazy_static;
+const STDIN_LIMIT: usize = 1024;
 lazy_static! {
     pub static ref STDIN: IrqSafeSpinlock<VecDeque<char>> = IrqSafeSpinlock::new(VecDeque::new());
 }
-
-/// Disciplina de línea y buffer de entrada TTY del sistema operativo.
-/// Gestiona la recepción de caracteres desde los controladores de hardware (PS/2, Serial),
-/// procesa señales de control estándar (ISIG - VINTR Ctrl+C) sobre el proceso en primer plano,
-/// y despierta tareas en espera de entrada.
 pub fn push_char(c: char) -> bool {
     if c == '\x03' {
         let fg = crate::task::FOREGROUND_TASK.load(Ordering::SeqCst);
@@ -20,11 +15,14 @@ pub fn push_char(c: char) -> bool {
             return true;
         }
     }
-
-    STDIN.lock().push_back(c);
+    let mut stdin = STDIN.lock();
+    if stdin.len() == STDIN_LIMIT {
+        stdin.pop_front();
+    }
+    stdin.push_back(c);
+    drop(stdin);
     crate::task::scheduler::wake_stdin_waiters()
 }
-
 pub fn push_str(s: &str) -> bool {
     let mut woke_waiter = false;
     for c in s.chars() {
@@ -32,7 +30,6 @@ pub fn push_str(s: &str) -> bool {
     }
     woke_waiter
 }
-
 pub fn pop_char() -> Option<char> {
     STDIN.lock().pop_front()
 }

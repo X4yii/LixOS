@@ -1,5 +1,4 @@
 pub const CURSOR_COLOR: u32 = 0x007DCFFF;
-
 pub struct SoftwareCursor {
     pub col: usize,
     pub row: usize,
@@ -11,7 +10,6 @@ pub struct SoftwareCursor {
     pub primary_saved_col: usize,
     pub primary_saved_row: usize,
 }
-
 impl SoftwareCursor {
     pub const fn new() -> Self {
         Self {
@@ -26,12 +24,10 @@ impl SoftwareCursor {
             primary_saved_row: 0,
         }
     }
-
     pub fn save_primary(&mut self) {
         self.primary_saved_col = self.col;
         self.primary_saved_row = self.row;
     }
-
     pub fn restore_primary(&mut self, max_cols: usize, max_rows: usize) {
         self.col = self.primary_saved_col.min(max_cols.saturating_sub(1));
         self.row = self.primary_saved_row.min(max_rows.saturating_sub(1));

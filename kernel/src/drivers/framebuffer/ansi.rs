@@ -1,25 +1,9 @@
 pub const COLOR_BG_DEFAULT: u32 = 0x001A1B26;
 pub const COLOR_FG_DEFAULT: u32 = 0x00C0CAF5;
-
 pub const ANSI_PALETTE_16: [u32; 16] = [
-    0x0015161E,
-    0x00F7768E,
-    0x009ECE6A,
-    0x00E0AF68,
-    0x007AA2F7,
-    0x00BB9AF7,
-    0x007DCFFF,
-    0x00A9B1D6,
-    0x00414868,
-    0x00FF899D,
-    0x009FE044,
-    0x00FABA4A,
-    0x0089DDFF,
-    0x00C099FF,
-    0x000DB9D7,
-    0x00C0CAF5,
+    0x0015161E, 0x00F7768E, 0x009ECE6A, 0x00E0AF68, 0x007AA2F7, 0x00BB9AF7, 0x007DCFFF, 0x00A9B1D6,
+    0x00414868, 0x00FF899D, 0x009FE044, 0x00FABA4A, 0x0089DDFF, 0x00C099FF, 0x000DB9D7, 0x00C0CAF5,
 ];
-
 #[inline(always)]
 pub fn ansi_256_to_rgb(idx: u8) -> u32 {
     if idx < 16 {
@@ -35,7 +19,6 @@ pub fn ansi_256_to_rgb(idx: u8) -> u32 {
         ((gray as u32) << 16) | ((gray as u32) << 8) | (gray as u32)
     }
 }
-
 pub trait AnsiConsumer {
     fn print_char(&mut self, ch: char);
     fn backspace(&mut self);
@@ -58,7 +41,6 @@ pub trait AnsiConsumer {
     fn set_bold(&mut self, bold: bool);
     fn set_reversed(&mut self, reversed: bool);
 }
-
 #[derive(Clone, Copy)]
 pub struct AnsiDecoder {
     pub state: u8,
@@ -66,7 +48,6 @@ pub struct AnsiDecoder {
     pub param_idx: usize,
     pub is_private: bool,
 }
-
 impl AnsiDecoder {
     pub const fn new() -> Self {
         Self {
@@ -76,14 +57,12 @@ impl AnsiDecoder {
             is_private: false,
         }
     }
-
     pub fn reset(&mut self) {
         self.state = 0;
         self.params = [0; 8];
         self.param_idx = 0;
         self.is_private = false;
     }
-
     pub fn feed<C: AnsiConsumer>(&mut self, ch: char, consumer: &mut C) {
         match self.state {
             0 => match ch {
@@ -110,7 +89,10 @@ impl AnsiDecoder {
                 if ch == '?' && self.param_idx == 0 && self.params[0] == 0 {
                     self.is_private = true;
                 } else if ch.is_ascii_digit() {
-                    self.params[self.param_idx] = self.params[self.param_idx] * 10 + (ch as i32 - '0' as i32);
+                    self.params[self.param_idx] = self.params[self.param_idx]
+                        .saturating_mul(10)
+                        .saturating_add(ch as i32 - '0' as i32)
+                        .min(65535);
                 } else if ch == ';' {
                     if self.param_idx < 7 {
                         self.param_idx += 1;
@@ -123,7 +105,6 @@ impl AnsiDecoder {
             _ => self.reset(),
         }
     }
-
     fn dispatch_csi<C: AnsiConsumer>(&mut self, ch: char, consumer: &mut C) {
         if self.is_private {
             match ch {
@@ -145,12 +126,19 @@ impl AnsiDecoder {
             }
             return;
         }
-
         match ch {
             'm' => self.dispatch_sgr(consumer),
             'H' | 'f' => {
-                let row = if self.params[0] > 0 { (self.params[0] - 1) as usize } else { 0 };
-                let col = if self.param_idx >= 1 && self.params[1] > 0 { (self.params[1] - 1) as usize } else { 0 };
+                let row = if self.params[0] > 0 {
+                    (self.params[0] - 1) as usize
+                } else {
+                    0
+                };
+                let col = if self.param_idx >= 1 && self.params[1] > 0 {
+                    (self.params[1] - 1) as usize
+                } else {
+                    0
+                };
                 consumer.set_cursor(row, col);
             }
             'J' => {
@@ -162,25 +150,40 @@ impl AnsiDecoder {
                 consumer.clear_line(self.params[0] as u8);
             }
             'A' => {
-                let count = if self.params[0] > 0 { self.params[0] as usize } else { 1 };
+                let count = if self.params[0] > 0 {
+                    self.params[0] as usize
+                } else {
+                    1
+                };
                 consumer.move_cursor_up(count);
             }
             'B' => {
-                let count = if self.params[0] > 0 { self.params[0] as usize } else { 1 };
+                let count = if self.params[0] > 0 {
+                    self.params[0] as usize
+                } else {
+                    1
+                };
                 consumer.move_cursor_down(count);
             }
             'C' => {
-                let count = if self.params[0] > 0 { self.params[0] as usize } else { 1 };
+                let count = if self.params[0] > 0 {
+                    self.params[0] as usize
+                } else {
+                    1
+                };
                 consumer.move_cursor_right(count);
             }
             'D' => {
-                let count = if self.params[0] > 0 { self.params[0] as usize } else { 1 };
+                let count = if self.params[0] > 0 {
+                    self.params[0] as usize
+                } else {
+                    1
+                };
                 consumer.move_cursor_left(count);
             }
             _ => {}
         }
     }
-
     fn dispatch_sgr<C: AnsiConsumer>(&mut self, consumer: &mut C) {
         let total = self.param_idx + 1;
         let mut i = 0;
