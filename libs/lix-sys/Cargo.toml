@@ -1,7 +1,10 @@
 [package]
 name = "lix-sys"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "Native system API, handles, syscalls and ABI definitions for LixOS"
 
 [dependencies]
+
+[lints]
+workspace = true

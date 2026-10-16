@@ -26,18 +26,11 @@ args = [{ name = "handle", type = "u64" }, { name = "rights", type = "u32" }]
 rights = "DUP"
 
 [[syscall]]
-id = 0x007
-name = "sys_revoker_create"
-description = "Crea un objeto de revocación activa"
-args = []
-rights = "NONE"
-
-[[syscall]]
-id = 0x008
-name = "sys_revoker_revoke"
-description = "Invalida todos los handles y memoria virtual ligados al revoker"
-args = [{ name = "rev_handle", type = "u64" }]
-rights = "NONE"
+id = 0x003
+name = "sys_handle_dup2"
+description = "Duplica un handle hacia un índice de descriptor específico"
+args = [{ name = "src_handle", type = "u64" }, { name = "dst_idx", type = "u64" }]
+rights = "DUP"
 
 [[syscall]]
 id = 0x100
@@ -54,57 +47,25 @@ args = [{ name = "code", type = "i32" }]
 rights = "NONE"
 
 [[syscall]]
-id = 0x200
-name = "sys_vmo_create"
-description = "Crea un objeto de memoria anónima"
-args = [{ name = "size", type = "u64" }, { name = "flags", type = "u32" }]
-rights = "NONE"
-
-[[syscall]]
-id = 0x202
-name = "sys_vm_map"
-description = "Mapea un VMO en el espacio virtual con contabilidad estricta"
-args = [
-    { name = "vmo_h", type = "u64" },
-    { name = "addr_hint", type = "u64" },
-    { name = "len", type = "u64" },
-    { name = "prot", type = "u32" },
-    { name = "flags", type = "u32" }
-]
-rights = "MAP"
-
-[[syscall]]
-id = 0x700
-name = "sys_display_info"
-description = "Consulta modos y resolución del display lix-drm"
-args = [{ name = "display_h", type = "u64" }, { name = "info_ptr", type = "u64" }]
-rights = "NONE"
-
-[[syscall]]
-id = 0x702
-name = "sys_display_present"
-description = "Presenta un VMO en pantalla con vblank synchronization"
-args = [
-    { name = "display_h", type = "u64" },
-    { name = "vmo_h", type = "u64" },
-    { name = "rects_ptr", type = "u64" },
-    { name = "rects_count", type = "u32" }
-]
-rights = "DISPLAY_OWN"
-
-[[syscall]]
-id = 0x801
-name = "sys_log_write"
-description = "Escribe texto en el búfer circular klog"
-args = [{ name = "buf_ptr", type = "u64" }, { name = "len", type = "u64" }]
-rights = "LOG"
-
-[[syscall]]
 id = 0x102
 name = "sys_process_kill"
-description = "Envía una señal POSIX a un proceso"
+description = "Envía una señal POSIX a un proceso (hijo propio, uno mismo, o con derecho MANAGE)"
 args = [{ name = "pid", type = "u64" }, { name = "signal", type = "u32" }]
-rights = "MANAGE"
+rights = "NONE"
+
+[[syscall]]
+id = 0x107
+name = "sys_sleep"
+description = "Bloquea el proceso actual durante un número de milisegundos"
+args = [{ name = "ms", type = "u64" }]
+rights = "NONE"
+
+[[syscall]]
+id = 0x10A
+name = "sys_waitpid"
+description = "Espera a la terminación de un proceso hijo concreto (hijo propio o con derecho MANAGE)"
+args = [{ name = "pid", type = "u64" }, { name = "status_ptr", type = "u64" }]
+rights = "NONE"
 
 [[syscall]]
 id = 0x10C
@@ -112,6 +73,111 @@ name = "sys_process_list"
 description = "Enumera los procesos del sistema hacia un búfer de usuario"
 args = [{ name = "buffer", type = "u64" }, { name = "max_count", type = "u64" }]
 rights = "INSPECT"
+
+[[syscall]]
+id = 0x200
+name = "sys_mmap"
+description = "Mapea memoria virtual anónima para el proceso"
+args = [{ name = "addr", type = "u64" }, { name = "len", type = "u64" }, { name = "prot", type = "u64" }, { name = "flags", type = "u64" }]
+rights = "MAP"
+
+[[syscall]]
+id = 0x201
+name = "sys_munmap"
+description = "Desmapea un rango de memoria virtual del proceso"
+args = [{ name = "addr", type = "u64" }, { name = "len", type = "u64" }]
+rights = "MAP"
+
+[[syscall]]
+id = 0x300
+name = "sys_open"
+description = "Abre un archivo devolviendo un descriptor/handle"
+args = [{ name = "path_ptr", type = "u64" }, { name = "path_len", type = "u64" }, { name = "flags", type = "u64" }]
+rights = "NONE"
+
+[[syscall]]
+id = 0x301
+name = "sys_read"
+description = "Lee bytes desde un handle hacia un búfer de usuario"
+args = [{ name = "handle", type = "u64" }, { name = "buf_ptr", type = "u64" }, { name = "len", type = "u64" }]
+rights = "READ"
+
+[[syscall]]
+id = 0x302
+name = "sys_write"
+description = "Escribe bytes desde un búfer de usuario hacia un handle"
+args = [{ name = "handle", type = "u64" }, { name = "buf_ptr", type = "u64" }, { name = "len", type = "u64" }]
+rights = "WRITE"
+
+[[syscall]]
+id = 0x303
+name = "sys_lseek"
+description = "Reposiciona el cursor de un descriptor de archivo"
+args = [{ name = "handle", type = "u64" }, { name = "offset", type = "i64" }, { name = "whence", type = "u64" }]
+rights = "NONE"
+
+[[syscall]]
+id = 0x306
+name = "sys_list_dir"
+description = "Enumera las entradas de un directorio hacia un búfer de usuario"
+args = [{ name = "path_ptr", type = "u64" }, { name = "path_len", type = "u64" }, { name = "out_ptr", type = "u64" }, { name = "out_len", type = "u64" }]
+rights = "READ"
+
+[[syscall]]
+id = 0x307
+name = "sys_read_file"
+description = "Lee el contenido completo de un archivo hacia un búfer de usuario"
+args = [{ name = "path_ptr", type = "u64" }, { name = "path_len", type = "u64" }, { name = "out_ptr", type = "u64" }, { name = "out_len", type = "u64" }]
+rights = "READ"
+
+[[syscall]]
+id = 0x308
+name = "sys_write_file"
+description = "Sobrescribe un archivo con el contenido de un búfer de usuario"
+args = [{ name = "path_ptr", type = "u64" }, { name = "path_len", type = "u64" }, { name = "data_ptr", type = "u64" }, { name = "data_len", type = "u64" }]
+rights = "WRITE"
+
+[[syscall]]
+id = 0x309
+name = "sys_read_nonblocking"
+description = "Lee bytes disponibles sin bloquear el proceso"
+args = [{ name = "handle", type = "u64" }, { name = "buf_ptr", type = "u64" }, { name = "len", type = "u64" }]
+rights = "READ"
+
+[[syscall]]
+id = 0x30A
+name = "sys_remove_file"
+description = "Elimina un archivo o directorio recursivo del sistema de archivos"
+args = [{ name = "path_ptr", type = "u64" }, { name = "path_len", type = "u64" }, { name = "recursive", type = "u64" }]
+rights = "WRITE"
+
+[[syscall]]
+id = 0x30B
+name = "sys_mkdir"
+description = "Crea un directorio en el sistema de archivos"
+args = [{ name = "path_ptr", type = "u64" }, { name = "path_len", type = "u64" }]
+rights = "WRITE"
+
+[[syscall]]
+id = 0x400
+name = "sys_channel_create"
+description = "Crea un par de extremos de canal IPC bidireccional"
+args = [{ name = "out_handles_ptr", type = "u64" }]
+rights = "TRANSFER"
+
+[[syscall]]
+id = 0x401
+name = "sys_channel_send"
+description = "Envía datos y transfiere handles a través de un canal"
+args = [{ name = "handle", type = "u64" }, { name = "data_ptr", type = "u64" }, { name = "data_len", type = "u64" }, { name = "handles_ptr", type = "u64" }, { name = "handles_len", type = "u64" }]
+rights = "WRITE"
+
+[[syscall]]
+id = 0x402
+name = "sys_channel_recv"
+description = "Recibe datos y handles transferidos desde un canal"
+args = [{ name = "handle", type = "u64" }, { name = "data_ptr", type = "u64" }, { name = "max_data_len", type = "u64" }, { name = "handles_ptr", type = "u64" }, { name = "max_handles_len", type = "u64" }]
+rights = "READ"
 
 [[syscall]]
 id = 0x703
@@ -128,6 +194,13 @@ args = [{ name = "command", type = "u64" }]
 rights = "NONE"
 
 [[syscall]]
+id = 0x705
+name = "sys_input_open"
+description = "Abre un flujo de eventos físicos de entrada"
+args = [{ name = "class", type = "u32" }]
+rights = "INPUT_READ"
+
+[[syscall]]
 id = 0x706
 name = "sys_set_keymap"
 description = "Configura la distribución activa del teclado PS/2"
@@ -140,6 +213,13 @@ name = "sys_get_keymap"
 description = "Consulta la distribución activa del teclado PS/2"
 args = []
 rights = "NONE"
+
+[[syscall]]
+id = 0x801
+name = "sys_log_write"
+description = "Escribe texto en el búfer circular klog"
+args = [{ name = "buf_ptr", type = "u64" }, { name = "len", type = "u64" }]
+rights = "LOG"
 
 [[syscall]]
 id = 0x803
@@ -199,3 +279,67 @@ name = "sys_block_sync"
 description = "Ejecuta Flush en la controladora para garantizar persistencia no volátil"
 args = [{ name = "handle", type = "u64" }]
 rights = "WRITE"
+
+[[syscall]]
+id = 0x825
+name = "sys_usb_enumerate"
+description = "Enumera los dispositivos USB detectados"
+args = [{ name = "buffer", type = "u64" }, { name = "capacity", type = "u32" }]
+rights = "ENUMERATE"
+
+[[syscall]]
+id = 0x830
+name = "sys_socket_open"
+description = "Crea un handle de socket UDP IPv4 no bloqueante"
+args = []
+rights = "NET_CONNECT"
+
+[[syscall]]
+id = 0x831
+name = "sys_socket_bind"
+description = "Asocia un socket UDP a un puerto local IPv4"
+args = [{ name = "socket", type = "u64" }, { name = "port", type = "u16" }]
+rights = "WRITE"
+
+[[syscall]]
+id = 0x832
+name = "sys_socket_sendto"
+description = "Envía un datagrama UDP IPv4"
+args = [{ name = "socket", type = "u64" }, { name = "address_ptr", type = "u64" }, { name = "data_ptr", type = "u64" }, { name = "length", type = "u64" }]
+rights = "WRITE"
+
+[[syscall]]
+id = 0x833
+name = "sys_socket_recvfrom"
+description = "Recibe un datagrama UDP IPv4 sin bloquear"
+args = [{ name = "socket", type = "u64" }, { name = "data_ptr", type = "u64" }, { name = "capacity", type = "u64" }, { name = "address_ptr", type = "u64" }]
+rights = "READ"
+
+
+[[syscall]]
+id = 0x600
+name = "sys_io_uring_setup"
+description = "Create an io_uring instance"
+args = [{ name = "entries", type = "u32" }]
+rights = "NONE"
+
+[[syscall]]
+id = 0x601
+name = "sys_io_uring_submit"
+description = "Submit an SQE to the ring"
+args = [{ name = "handle", type = "u64" }, { name = "op", type = "u8" }, { name = "arg1", type = "u64" }, { name = "arg2", type = "u64" }]
+rights = "NONE"
+
+[[syscall]]
+id = 0x602
+name = "sys_io_uring_enter"
+description = "Wait for at least one completion"
+args = [{ name = "handle", type = "u64" }]
+rights = "NONE"
+
+[[syscall]]
+id = 0x603
+name = "sys_io_uring_peek"
+description = "Peek a completion event"
+args = [{ name = "handle", type = "u64" }, { name = "user_ptr", type = "u64" }]
+rights = "NONE"
