@@ -1,0 +1,11 @@
+[package]
+name = "bluetoothd"
+version = "0.0.2"
+edition = "2021"
+description = "LixOS Bluetooth controller and profile manager"
+
+[dependencies]
+lix-bluetooth = { path = "../../libs/lix-bluetooth" }
+
+[lints]
+workspace = true
