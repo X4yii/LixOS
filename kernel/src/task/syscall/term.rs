@@ -1,8 +1,13 @@
-use crate::task::syscall::{validate_user_buffer, copy_to_user};
-
+use crate::task::syscall::{copy_to_user, validate_user_buffer};
 pub fn sys_terminal_info(out_ptr_val: u64) -> u64 {
     let out_ptr = out_ptr_val as *mut lix_sys::TerminalInfo;
-    if validate_user_buffer(out_ptr as u64, core::mem::size_of::<lix_sys::TerminalInfo>(), true).is_err() {
+    if validate_user_buffer(
+        out_ptr as u64,
+        core::mem::size_of::<lix_sys::TerminalInfo>(),
+        true,
+    )
+    .is_err()
+    {
         return -(lix_sys::ErrorCode::EFAULT as i32) as u64;
     }
     if let Some(info) = crate::drivers::framebuffer::get_terminal_info() {
@@ -14,7 +19,6 @@ pub fn sys_terminal_info(out_ptr_val: u64) -> u64 {
         -(lix_sys::ErrorCode::ENODEV as i32) as u64
     }
 }
-
 pub fn sys_terminal_set_scale(cmd: i64) -> u64 {
     match cmd {
         0 => {
@@ -33,7 +37,6 @@ pub fn sys_terminal_set_scale(cmd: i64) -> u64 {
     }
     0
 }
-
 pub fn sys_set_keymap(id: u8) -> u64 {
     if let Some(kind) = crate::drivers::keyboard::KeyboardLayoutKind::from_u8(id) {
         crate::drivers::keyboard::set_layout(kind);
@@ -42,14 +45,68 @@ pub fn sys_set_keymap(id: u8) -> u64 {
         -(lix_sys::ErrorCode::EINVAL as i32) as u64
     }
 }
-
 pub fn sys_get_keymap() -> u64 {
     crate::drivers::keyboard::get_layout() as u64
 }
-
+pub fn sys_input_open(class: u64) -> u64 {
+    if class > 2 {
+        return -(lix_sys::ErrorCode::EINVAL as i32) as u64;
+    }
+    let result = crate::task::scheduler::with_current_process(|current| {
+        if !current.handles.has_right(lix_sys::Rights::INPUT_READ) {
+            return Err(lix_sys::ErrorCode::EACCES);
+        }
+        current.handles.insert(
+            crate::task::handle::KernelObject::InputDevice {
+                class: class as u32,
+            },
+            lix_sys::Rights::READ.union(lix_sys::Rights::WAIT),
+        )
+    });
+    match result {
+        Some(Ok(handle)) => handle.0,
+        Some(Err(error)) => -(error as i32) as u64,
+        None => -(lix_sys::ErrorCode::ESRCH as i32) as u64,
+    }
+}
+pub fn sys_usb_enumerate(buffer_ptr: u64, capacity: u64) -> u64 {
+    let capacity = capacity as usize;
+    if capacity > 128
+        || (capacity != 0
+            && buffer_ptr as usize % core::mem::align_of::<lix_sys::UsbDeviceInfo>() != 0)
+        || validate_user_buffer(
+            buffer_ptr,
+            capacity.saturating_mul(core::mem::size_of::<lix_sys::UsbDeviceInfo>()),
+            true,
+        )
+        .is_err()
+    {
+        return -(lix_sys::ErrorCode::EFAULT as i32) as u64;
+    }
+    let allowed = crate::task::scheduler::with_current_process(|current| {
+        current.handles.has_right(lix_sys::Rights::ENUMERATE)
+    })
+    .unwrap_or(false);
+    if !allowed {
+        return -(lix_sys::ErrorCode::EACCES as i32) as u64;
+    }
+    if capacity == 0 {
+        return 0;
+    }
+    let out = unsafe {
+        core::slice::from_raw_parts_mut(buffer_ptr as *mut lix_sys::UsbDeviceInfo, capacity)
+    };
+    crate::drivers::usb::enumerate(out) as u64
+}
 pub fn sys_monitor_metrics(out_ptr_val: u64) -> u64 {
     let out = out_ptr_val as *mut lix_sys::SystemMetrics;
-    if validate_user_buffer(out as u64, core::mem::size_of::<lix_sys::SystemMetrics>(), true).is_err() {
+    if validate_user_buffer(
+        out as u64,
+        core::mem::size_of::<lix_sys::SystemMetrics>(),
+        true,
+    )
+    .is_err()
+    {
         return -(lix_sys::ErrorCode::EFAULT as i32) as u64;
     }
     let scheduler_ticks = crate::task::scheduler::SCHEDULER.lock().total_ticks;
@@ -68,7 +125,6 @@ pub fn sys_monitor_metrics(out_ptr_val: u64) -> u64 {
     }
     0
 }
-
 pub fn sys_power() {
     crate::power::system_shutdown();
 }

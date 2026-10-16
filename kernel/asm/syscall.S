@@ -29,11 +29,10 @@ syscall_entry_asm:
     mov rcx, [rsp + 32]
     mov r8,  [rsp + 24]
     mov r9,  [rsp + 16]
-    mov rax, cr3
-    push rax
     cld
+    sti
     call syscall_dispatcher
-    pop rbx
+    cli
     add rsp, 8
     pop r9
     pop r8
@@ -49,6 +48,7 @@ syscall_entry_asm:
     pop rbp
     pop rcx
     pop r11
+    cli
     pop rsp
     swapgs
     sysretq

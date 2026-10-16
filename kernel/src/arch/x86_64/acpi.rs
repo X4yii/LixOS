@@ -1,7 +1,7 @@
-use crate::memory::address::{PhysAddr, hhdm_offset};
-
+use crate::memory::address::{hhdm_offset, PhysAddr};
 pub const MAX_CPUS: usize = 32;
-
+pub const MAX_IOAPICS: usize = 4;
+pub const MAX_IRQ_OVERRIDES: usize = 16;
 #[repr(C, packed)]
 pub struct AcpiHeader {
     pub signature: [u8; 4],
@@ -14,7 +14,6 @@ pub struct AcpiHeader {
     pub creator_id: u32,
     pub creator_revision: u32,
 }
-
 #[repr(C, packed)]
 struct RsdpDescriptor {
     signature: [u8; 8],
@@ -23,7 +22,6 @@ struct RsdpDescriptor {
     revision: u8,
     rsdt_addr: u32,
 }
-
 #[repr(C, packed)]
 struct XsdpDescriptor {
     rsdp: RsdpDescriptor,
@@ -32,42 +30,78 @@ struct XsdpDescriptor {
     extended_checksum: u8,
     reserved: [u8; 3],
 }
-
 #[derive(Clone, Copy)]
 pub struct CpuDescriptor {
     pub apic_id: u8,
     pub acpi_id: u8,
     pub enabled: bool,
 }
-
 impl CpuDescriptor {
     pub const fn empty() -> Self {
-        Self { apic_id: 0, acpi_id: 0, enabled: false }
+        Self {
+            apic_id: 0,
+            acpi_id: 0,
+            enabled: false,
+        }
     }
 }
-
+#[derive(Clone, Copy)]
+pub struct IoApicDescriptor {
+    pub id: u8,
+    pub physical_address: u32,
+    pub gsi_base: u32,
+}
+impl IoApicDescriptor {
+    pub const fn empty() -> Self {
+        Self {
+            id: 0,
+            physical_address: 0,
+            gsi_base: 0,
+        }
+    }
+}
+#[derive(Clone, Copy)]
+pub struct InterruptSourceOverride {
+    pub source_irq: u8,
+    pub gsi: u32,
+    pub flags: u16,
+}
+impl InterruptSourceOverride {
+    pub const fn empty() -> Self {
+        Self {
+            source_irq: 0,
+            gsi: 0,
+            flags: 0,
+        }
+    }
+}
 pub struct AcpiTopology {
     pub lapic_phys_addr: u64,
     pub cpus: [CpuDescriptor; MAX_CPUS],
     pub cpu_count: usize,
+    pub ioapics: [IoApicDescriptor; MAX_IOAPICS],
+    pub ioapic_count: usize,
+    pub irq_overrides: [InterruptSourceOverride; MAX_IRQ_OVERRIDES],
+    pub irq_override_count: usize,
 }
-
 impl AcpiTopology {
     pub const fn empty() -> Self {
         Self {
             lapic_phys_addr: 0xFEE0_0000,
             cpus: [CpuDescriptor::empty(); MAX_CPUS],
             cpu_count: 0,
+            ioapics: [IoApicDescriptor::empty(); MAX_IOAPICS],
+            ioapic_count: 0,
+            irq_overrides: [InterruptSourceOverride::empty(); MAX_IRQ_OVERRIDES],
+            irq_override_count: 0,
         }
     }
 }
-
 unsafe fn current_pml4() -> usize {
     let cr3: u64;
     core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nomem, nostack, preserves_flags));
     ((cr3 & 0x000F_FFFF_FFFF_F000) / 4096) as usize
 }
-
 unsafe fn map_acpi_table(phys_addr: u64, len: usize) -> Option<u64> {
     if phys_addr >= 0xFFFF_8000_0000_0000 {
         return Some(phys_addr);
@@ -77,23 +111,19 @@ unsafe fn map_acpi_table(phys_addr: u64, len: usize) -> Option<u64> {
         .ok()
         .map(|v| v.get())
 }
-
 pub unsafe fn parse_madt(rsdp_phys: u64) -> Option<AcpiTopology> {
     let rsdp_addr = if rsdp_phys != 0 {
         rsdp_phys
     } else {
         find_rsdp_in_bios()?
     };
-
     let rsdp_virt = map_acpi_table(rsdp_addr, core::mem::size_of::<XsdpDescriptor>())?;
     let sig_read = core::ptr::read_unaligned(rsdp_virt as *const [u8; 8]);
     if &sig_read != b"RSD PTR " {
         return None;
     }
-
     let revision = *((rsdp_virt + 15) as *const u8);
     let mut topology = AcpiTopology::empty();
-
     let madt_phys = if revision >= 2 {
         let xsdt_addr = core::ptr::read_unaligned((rsdp_virt + 24) as *const u64);
         find_table_xsdt(xsdt_addr, b"APIC")
@@ -101,28 +131,23 @@ pub unsafe fn parse_madt(rsdp_phys: u64) -> Option<AcpiTopology> {
         let rsdt_addr = core::ptr::read_unaligned((rsdp_virt + 16) as *const u32);
         find_table_rsdt(rsdt_addr as u64, b"APIC")
     };
-
     let madt_phys = madt_phys?;
     let madt_virt = map_acpi_table(madt_phys, 0x2000)?;
     let length = core::ptr::read_unaligned((madt_virt + 4) as *const u32) as usize;
-
     topology.lapic_phys_addr = core::ptr::read_unaligned((madt_virt + 36) as *const u32) as u64;
-
     let mut offset = 44usize;
-    while offset + 2 <= length && topology.cpu_count < MAX_CPUS {
+    while offset + 2 <= length {
         let entry_type = *((madt_virt + offset as u64) as *const u8);
         let entry_len = *((madt_virt + offset as u64 + 1) as *const u8) as usize;
         if entry_len < 2 {
             break;
         }
-
         if entry_type == 0 && entry_len >= 8 {
             let acpi_id = *((madt_virt + offset as u64 + 2) as *const u8);
             let apic_id = *((madt_virt + offset as u64 + 3) as *const u8);
             let flags = core::ptr::read_unaligned((madt_virt + offset as u64 + 4) as *const u32);
             let enabled = (flags & 1 != 0) || (flags & 2 != 0);
-
-            if enabled {
+            if enabled && topology.cpu_count < MAX_CPUS {
                 topology.cpus[topology.cpu_count] = CpuDescriptor {
                     apic_id,
                     acpi_id,
@@ -131,20 +156,49 @@ pub unsafe fn parse_madt(rsdp_phys: u64) -> Option<AcpiTopology> {
                 topology.cpu_count += 1;
             }
         } else if entry_type == 5 && entry_len >= 12 {
-            let override_addr = core::ptr::read_unaligned((madt_virt + offset as u64 + 4) as *const u64);
+            let override_addr =
+                core::ptr::read_unaligned((madt_virt + offset as u64 + 4) as *const u64);
             topology.lapic_phys_addr = override_addr;
+        } else if entry_type == 1 && entry_len >= 12 && topology.ioapic_count < MAX_IOAPICS {
+            let id = *((madt_virt + offset as u64 + 2) as *const u8);
+            let physical_address =
+                core::ptr::read_unaligned((madt_virt + offset as u64 + 4) as *const u32);
+            let gsi_base = core::ptr::read_unaligned((madt_virt + offset as u64 + 8) as *const u32);
+            topology.ioapics[topology.ioapic_count] = IoApicDescriptor {
+                id,
+                physical_address,
+                gsi_base,
+            };
+            topology.ioapic_count += 1;
+        } else if entry_type == 2
+            && entry_len >= 10
+            && topology.irq_override_count < MAX_IRQ_OVERRIDES
+        {
+            let bus = *((madt_virt + offset as u64 + 2) as *const u8);
+            if bus == 0 {
+                let source_irq = *((madt_virt + offset as u64 + 3) as *const u8);
+                let gsi = core::ptr::read_unaligned((madt_virt + offset as u64 + 4) as *const u32);
+                let flags =
+                    core::ptr::read_unaligned((madt_virt + offset as u64 + 8) as *const u16);
+                topology.irq_overrides[topology.irq_override_count] = InterruptSourceOverride {
+                    source_irq,
+                    gsi,
+                    flags,
+                };
+                topology.irq_override_count += 1;
+            }
         }
-
         offset += entry_len;
     }
-
     Some(topology)
 }
-
 unsafe fn find_rsdp_in_bios() -> Option<u64> {
     let hhdm = hhdm_offset();
     for page_start in (0xE0000u64..=0xFFFF0u64).step_by(16) {
-        let virt_opt = hhdm.map_phys(PhysAddr::new(page_start)).ok().map(|v| v.get())
+        let virt_opt = hhdm
+            .map_phys(PhysAddr::new(page_start))
+            .ok()
+            .map(|v| v.get())
             .or_else(|| map_acpi_table(page_start, 16));
         if let Some(virt) = virt_opt {
             let sig = core::ptr::read_unaligned(virt as *const [u8; 8]);
@@ -155,7 +209,6 @@ unsafe fn find_rsdp_in_bios() -> Option<u64> {
     }
     None
 }
-
 unsafe fn find_table_rsdt(rsdt_phys: u64, sig: &[u8; 4]) -> Option<u64> {
     let rsdt_virt = map_acpi_table(rsdt_phys, 0x1000)?;
     let len = core::ptr::read_unaligned((rsdt_virt + 4) as *const u32) as usize;
@@ -164,7 +217,9 @@ unsafe fn find_table_rsdt(rsdt_phys: u64, sig: &[u8; 4]) -> Option<u64> {
     }
     let entries = (len - 36) / 4;
     for i in 0..entries {
-        let entry_phys = core::ptr::read_unaligned(((rsdt_virt + 36) as *const u8).add(i * 4) as *const u32) as u64;
+        let entry_phys =
+            core::ptr::read_unaligned(((rsdt_virt + 36) as *const u8).add(i * 4) as *const u32)
+                as u64;
         if let Some(virt) = map_acpi_table(entry_phys, core::mem::size_of::<AcpiHeader>()) {
             let sig_read = core::ptr::read_unaligned(virt as *const [u8; 4]);
             if &sig_read == sig {
@@ -174,7 +229,6 @@ unsafe fn find_table_rsdt(rsdt_phys: u64, sig: &[u8; 4]) -> Option<u64> {
     }
     None
 }
-
 unsafe fn find_table_xsdt(xsdt_phys: u64, sig: &[u8; 4]) -> Option<u64> {
     let xsdt_virt = map_acpi_table(xsdt_phys, 0x1000)?;
     let len = core::ptr::read_unaligned((xsdt_virt + 4) as *const u32) as usize;
@@ -183,7 +237,8 @@ unsafe fn find_table_xsdt(xsdt_phys: u64, sig: &[u8; 4]) -> Option<u64> {
     }
     let entries = (len - 36) / 8;
     for i in 0..entries {
-        let entry_phys = core::ptr::read_unaligned(((xsdt_virt + 36) as *const u8).add(i * 8) as *const u64);
+        let entry_phys =
+            core::ptr::read_unaligned(((xsdt_virt + 36) as *const u8).add(i * 8) as *const u64);
         if let Some(virt) = map_acpi_table(entry_phys, core::mem::size_of::<AcpiHeader>()) {
             let sig_read = core::ptr::read_unaligned(virt as *const [u8; 4]);
             if &sig_read == sig {

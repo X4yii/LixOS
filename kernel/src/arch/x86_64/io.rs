@@ -1,5 +1,4 @@
 use core::arch::asm;
-
 pub unsafe fn outb(port: u16, val: u8) {
     asm!(
         "out dx, al",
@@ -8,7 +7,6 @@ pub unsafe fn outb(port: u16, val: u8) {
         options(nomem, nostack, preserves_flags)
     );
 }
-
 pub unsafe fn inb(port: u16) -> u8 {
     let val: u8;
     asm!(
@@ -19,7 +17,6 @@ pub unsafe fn inb(port: u16) -> u8 {
     );
     val
 }
-
 pub unsafe fn outw(port: u16, val: u16) {
     asm!(
         "out dx, ax",
@@ -28,7 +25,6 @@ pub unsafe fn outw(port: u16, val: u16) {
         options(nomem, nostack, preserves_flags)
     );
 }
-
 pub unsafe fn inw(port: u16) -> u16 {
     let val: u16;
     asm!(
@@ -39,7 +35,6 @@ pub unsafe fn inw(port: u16) -> u16 {
     );
     val
 }
-
 pub unsafe fn io_wait() {
     outb(0x80, 0);
 }

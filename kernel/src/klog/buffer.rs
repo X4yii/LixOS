@@ -4,7 +4,6 @@ pub struct KlogRingBuffer<const CAPACITY: usize> {
     count: usize,
     total_written: usize,
 }
-
 impl<const CAPACITY: usize> KlogRingBuffer<CAPACITY> {
     pub const fn new() -> Self {
         Self {
@@ -14,7 +13,6 @@ impl<const CAPACITY: usize> KlogRingBuffer<CAPACITY> {
             total_written: 0,
         }
     }
-
     pub fn write_byte(&mut self, byte: u8) {
         self.buffer[self.head] = byte;
         self.head = (self.head + 1) % CAPACITY;
@@ -23,13 +21,11 @@ impl<const CAPACITY: usize> KlogRingBuffer<CAPACITY> {
         }
         self.total_written += 1;
     }
-
     pub fn write_str(&mut self, s: &str) {
         for b in s.bytes() {
             self.write_byte(b);
         }
     }
-
     pub fn total_written(&self) -> usize {
         self.total_written
     }
