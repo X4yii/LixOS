@@ -1,0 +1,11 @@
+[package]
+name = "netmgr"
+version = "0.0.2"
+edition = "2021"
+description = "LixOS network profile and link manager"
+
+[dependencies]
+lix-wifi = { path = "../../libs/lix-wifi" }
+
+[lints]
+workspace = true

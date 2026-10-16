@@ -1,0 +1,19 @@
+[package]
+name = "sessiond"
+version = "0.0.2"
+edition = "2021"
+description = "LixOS first user process: service bootstrap, supervision and session policy"
+
+[dependencies]
+lix-sys = { path = "../../libs/lix-sys" }
+sys-libc = { path = "../../libs/sys-libc" }
+authd = { path = "../authd" }
+linked_list_allocator = "0.10.5"
+
+[[bin]]
+name = "sessiond"
+path = "src/main.rs"
+test = false
+
+[lints]
+workspace = true

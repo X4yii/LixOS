@@ -1,8 +1,11 @@
 [package]
 name = "lix-compositor"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "Userspace micro-compositor with Zero-Copy VMO support"
 
 [dependencies]
 lix-sys = { path = "../../libs/lix-sys" }
+
+[lints]
+workspace = true
