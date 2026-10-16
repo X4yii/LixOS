@@ -1,14 +1,11 @@
-//! Read-only, bounds-checked GPT discovery for boot-time root selection.
 use crate::drivers::block::{BlockDevice, BlockError, DmaBuffer, PartitionDevice};
 use crate::memory::pmm::PAGE_SIZE;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use lix_storage::{parse_gpt_header, parse_gpt_partitions, GptError};
-
 const LINUX_FILESYSTEM_GUID: [u8; 16] = [
     0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47, 0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4,
 ];
-
 fn block_error(error: GptError) -> BlockError {
     match error {
         GptError::OutOfMemory => BlockError::OutOfMemory,
@@ -16,7 +13,6 @@ fn block_error(error: GptError) -> BlockError {
         _ => BlockError::InvalidGeometry,
     }
 }
-
 fn validate_table_range(
     header: lix_storage::GptHeader,
     block_size: u64,
@@ -40,7 +36,6 @@ fn validate_table_range(
     }
     Ok(())
 }
-
 fn read_entry_array(
     device: &dyn BlockDevice,
     header: lix_storage::GptHeader,
@@ -66,8 +61,6 @@ fn read_entry_array(
     }
     Ok(entries)
 }
-
-/// Finds one Linux filesystem partition and validates both GPT headers and the entry table.
 pub fn find_linux_root(
     parent: &'static dyn BlockDevice,
     requested_guid: Option<[u8; 16]>,
@@ -77,13 +70,11 @@ pub fn find_linux_root(
     if block_size < 512 || block_size > PAGE_SIZE || geometry.block_count < 3 {
         return Err(BlockError::InvalidGeometry);
     }
-
     let mut dma = DmaBuffer::allocate()?;
     parent.read_blocks(1, 1, &mut dma)?;
     let primary = parse_gpt_header(dma.as_slice(block_size)?, geometry.block_count, 1)
         .map_err(block_error)?;
     validate_table_range(primary, block_size as u64, geometry.block_count)?;
-
     parent.read_blocks(primary.backup_lba, 1, &mut dma)?;
     let backup = parse_gpt_header(
         dma.as_slice(block_size)?,
@@ -95,7 +86,6 @@ pub fn find_linux_root(
     if !lix_storage::headers_match(primary, backup, geometry.block_count) {
         return Err(BlockError::InvalidGeometry);
     }
-
     let entries = read_entry_array(parent, primary, block_size, &mut dma)?;
     let backup_entries = read_entry_array(parent, backup, block_size, &mut dma)?;
     if entries != backup_entries {
@@ -103,7 +93,6 @@ pub fn find_linux_root(
     }
     let partitions = parse_gpt_partitions(primary, &entries).map_err(block_error)?;
     parse_gpt_partitions(backup, &backup_entries).map_err(block_error)?;
-
     let mut found = None;
     for partition in partitions
         .iter()
@@ -127,7 +116,6 @@ pub fn find_linux_root(
         parent, first, count,
     )?)))
 }
-
 pub fn parse_guid(text: &str) -> Option<[u8; 16]> {
     lix_storage::parse_guid(text)
 }

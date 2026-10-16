@@ -1,11 +1,25 @@
 #![no_std]
 extern crate alloc;
-
+use alloc::format;
+use alloc::string::String;
 use alloc::vec::Vec;
-
+pub mod ext4;
+pub mod fat32;
+pub mod writer;
+pub use ext4::{ext4_mkfs_args, format_ext4, Ext4Volume, EXT4_MKFS_FEATURES};
+pub use fat32::{format_esp, EspFiles};
+pub use writer::BlockWriter;
 pub const GPT_HEADER_MIN_SIZE: usize = 92;
 pub const GPT_MAX_ENTRY_TABLE_BYTES: u64 = 1024 * 1024;
-
+pub const GPT_ENTRY_COUNT: u64 = 128;
+pub const GPT_ENTRY_SIZE: u64 = 128;
+pub const GPT_ENTRY_TABLE_BYTES: u64 = GPT_ENTRY_COUNT * GPT_ENTRY_SIZE;
+pub const EFI_SYSTEM_PARTITION_TYPE_GUID: [u8; 16] = [
+    0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11, 0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B,
+];
+pub const LINUX_FILESYSTEM_TYPE_GUID: [u8; 16] = [
+    0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47, 0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4,
+];
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GptError {
     InvalidGeometry,
@@ -16,7 +30,6 @@ pub enum GptError {
     OverlappingPartitions,
     OutOfMemory,
 }
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GptHeader {
     pub current_lba: u64,
@@ -30,7 +43,6 @@ pub struct GptHeader {
     pub entries_crc32: u32,
     pub header_size: u32,
 }
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GptPartition {
     pub type_guid: [u8; 16],
@@ -39,7 +51,6 @@ pub struct GptPartition {
     pub last_lba: u64,
     pub attributes: u64,
 }
-
 #[derive(Clone, Debug)]
 pub struct GptImage {
     pub protective_mbr: [u8; 512],
@@ -52,24 +63,21 @@ pub struct GptImage {
     pub primary_entries_lba: u64,
     pub backup_entries_lba: u64,
 }
-
 impl GptPartition {
     pub fn block_count(self) -> Option<u64> {
         self.last_lba.checked_sub(self.first_lba)?.checked_add(1)
     }
 }
-
 pub fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = !0u32;
     for &byte in bytes {
-        crc ^= byte as u32;
+        crc ^= u32::from(byte);
         for _ in 0..8 {
             crc = (crc >> 1) ^ (0xEDB8_8320 & (0u32.wrapping_sub(crc & 1)));
         }
     }
     !crc
 }
-
 fn u32le(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes(
         bytes.get(offset..offset.checked_add(4)?)?.try_into().ok()?,
@@ -81,15 +89,8 @@ fn u64le(bytes: &[u8], offset: usize) -> Option<u64> {
     ))
 }
 fn guid(bytes: &[u8], offset: usize) -> Option<[u8; 16]> {
-    Some(
-        bytes
-            .get(offset..offset.checked_add(16)?)?
-            .try_into()
-            .ok()?,
-    )
+    bytes.get(offset..offset.checked_add(16)?)?.try_into().ok()
 }
-
-/// Validates a GPT header against its physical LBA and disk geometry.
 pub fn parse_gpt_header(
     block: &[u8],
     disk_blocks: u64,
@@ -115,7 +116,6 @@ pub fn parse_gpt_header(
     if crc32(&bytes) != expected_crc {
         return Err(GptError::HeaderChecksum);
     }
-
     let header = GptHeader {
         current_lba: u64le(block, 24).ok_or(GptError::InvalidHeader)?,
         backup_lba: u64le(block, 32).ok_or(GptError::InvalidHeader)?,
@@ -131,8 +131,8 @@ pub fn parse_gpt_header(
     if header.disk_guid.iter().all(|byte| *byte == 0) {
         return Err(GptError::InvalidHeader);
     }
-    let table_bytes = (header.entry_count as u64)
-        .checked_mul(header.entry_size as u64)
+    let table_bytes = u64::from(header.entry_count)
+        .checked_mul(u64::from(header.entry_size))
         .ok_or(GptError::InvalidGeometry)?;
     let table_blocks = table_bytes.div_ceil(block.len() as u64);
     let table_end = header
@@ -146,9 +146,9 @@ pub fn parse_gpt_header(
         || header.last_usable_lba >= disk_blocks
         || header.entry_count == 0
         || header.entry_size < 128
-        || header.entry_size % 8 != 0
+        || !header.entry_size.is_multiple_of(8)
         || header.entry_size as usize > block.len()
-        || block.len() % header.entry_size as usize != 0
+        || !block.len().is_multiple_of(header.entry_size as usize)
         || table_bytes > GPT_MAX_ENTRY_TABLE_BYTES
         || header.entries_lba < 2
         || table_end > disk_blocks
@@ -157,7 +157,6 @@ pub fn parse_gpt_header(
     }
     Ok(header)
 }
-
 pub fn headers_match(primary: GptHeader, backup: GptHeader, disk_blocks: u64) -> bool {
     disk_blocks >= 3
         && primary.current_lba == 1
@@ -171,8 +170,6 @@ pub fn headers_match(primary: GptHeader, backup: GptHeader, disk_blocks: u64) ->
         && primary.entry_size == backup.entry_size
         && primary.entries_crc32 == backup.entries_crc32
 }
-
-/// Parses and validates all used GPT entries, rejecting overlaps and bad bounds.
 pub fn parse_gpt_partitions(
     header: GptHeader,
     entries: &[u8],
@@ -228,9 +225,6 @@ pub fn parse_gpt_partitions(
     }
     Ok(partitions)
 }
-
-/// Serializes a standard 128-entry GPT image layout without performing I/O.
-/// The caller owns persistence, target selection and write-order journaling.
 pub fn build_gpt_image(
     block_size: u32,
     disk_blocks: u64,
@@ -238,8 +232,7 @@ pub fn build_gpt_image(
     partitions: &[GptPartition],
 ) -> Result<GptImage, GptError> {
     let block_size = block_size as usize;
-    if block_size < 512
-        || block_size > 4096
+    if !(512..=4096).contains(&block_size)
         || !block_size.is_power_of_two()
         || disk_blocks < 3
         || disk_guid.iter().all(|byte| *byte == 0)
@@ -247,9 +240,7 @@ pub fn build_gpt_image(
     {
         return Err(GptError::InvalidGeometry);
     }
-    const ENTRY_COUNT: u64 = 128;
-    const ENTRY_SIZE: u64 = 128;
-    let entries_len = (ENTRY_COUNT * ENTRY_SIZE) as usize;
+    let entries_len = (GPT_ENTRY_COUNT * GPT_ENTRY_SIZE) as usize;
     let entries_blocks = (entries_len as u64).div_ceil(block_size as u64);
     let first_usable_lba = 2u64
         .checked_add(entries_blocks)
@@ -263,7 +254,6 @@ pub fn build_gpt_image(
     if last_usable_lba < first_usable_lba {
         return Err(GptError::InvalidGeometry);
     }
-
     let mut sorted = Vec::new();
     sorted
         .try_reserve_exact(partitions.len())
@@ -291,14 +281,13 @@ pub fn build_gpt_image(
     if guids.windows(2).any(|pair| pair[0] == pair[1]) {
         return Err(GptError::InvalidEntry);
     }
-
     let mut entries = Vec::new();
     entries
         .try_reserve_exact(entries_len)
         .map_err(|_| GptError::OutOfMemory)?;
     entries.resize(entries_len, 0);
     for (index, partition) in partitions.iter().enumerate() {
-        let at = index * ENTRY_SIZE as usize;
+        let at = index * GPT_ENTRY_SIZE as usize;
         entries[at..at + 16].copy_from_slice(&partition.type_guid);
         entries[at + 16..at + 32].copy_from_slice(&partition.unique_guid);
         entries[at + 32..at + 40].copy_from_slice(&partition.first_lba.to_le_bytes());
@@ -317,8 +306,8 @@ pub fn build_gpt_image(
         header[48..56].copy_from_slice(&last_usable_lba.to_le_bytes());
         header[56..72].copy_from_slice(&disk_guid);
         header[72..80].copy_from_slice(&entries_lba.to_le_bytes());
-        header[80..84].copy_from_slice(&(ENTRY_COUNT as u32).to_le_bytes());
-        header[84..88].copy_from_slice(&(ENTRY_SIZE as u32).to_le_bytes());
+        header[80..84].copy_from_slice(&(GPT_ENTRY_COUNT as u32).to_le_bytes());
+        header[84..88].copy_from_slice(&(GPT_ENTRY_SIZE as u32).to_le_bytes());
         header[88..92].copy_from_slice(&entries_crc32.to_le_bytes());
         let header_crc = crc32(&header[..GPT_HEADER_MIN_SIZE]);
         header[16..20].copy_from_slice(&header_crc.to_le_bytes());
@@ -332,7 +321,7 @@ pub fn build_gpt_image(
     let disk_sectors_512 = disk_blocks
         .checked_mul(block_size as u64 / 512)
         .ok_or(GptError::InvalidGeometry)?;
-    let protective_size = disk_sectors_512.saturating_sub(1).min(u32::MAX as u64) as u32;
+    let protective_size = disk_sectors_512.saturating_sub(1).min(u64::from(u32::MAX)) as u32;
     protective_mbr[446 + 12..446 + 16].copy_from_slice(&protective_size.to_le_bytes());
     protective_mbr[510..512].copy_from_slice(&[0x55, 0xAA]);
     Ok(GptImage {
@@ -347,7 +336,67 @@ pub fn build_gpt_image(
         backup_entries_lba,
     })
 }
-
+pub fn write_gpt_layout(
+    writer: &mut impl BlockWriter,
+    image: &GptImage,
+    block_size: u64,
+    total_blocks: u64,
+) -> Result<(), String> {
+    if block_size == 0 || total_blocks < 3 {
+        return Err("geometría GPT inválida al escribir la tabla".into());
+    }
+    let block_offset = |blocks: u64| {
+        blocks
+            .checked_mul(block_size)
+            .ok_or_else(|| format!("offset GPT inválido para el bloque {blocks}"))
+    };
+    let last_header_lba = total_blocks
+        .checked_sub(1)
+        .ok_or_else(|| String::from("imagen GPT sin bloques"))?;
+    writer
+        .write_at(0, &image.protective_mbr)
+        .map_err(|error| format!("MBR protector: {error}"))?;
+    writer
+        .write_at(block_offset(1)?, &image.primary_header)
+        .map_err(|error| format!("cabecera GPT primaria: {error}"))?;
+    writer
+        .write_at(
+            block_offset(image.primary_entries_lba)?,
+            &image.primary_entries,
+        )
+        .map_err(|error| format!("entradas GPT primarias: {error}"))?;
+    writer
+        .write_at(
+            block_offset(image.backup_entries_lba)?,
+            &image.backup_entries,
+        )
+        .map_err(|error| format!("entradas GPT de respaldo: {error}"))?;
+    writer
+        .write_at(block_offset(last_header_lba)?, &image.backup_header)
+        .map_err(|error| format!("cabecera GPT de respaldo: {error}"))?;
+    Ok(())
+}
+pub fn guid_string(guid: [u8; 16]) -> String {
+    format!(
+        "{:02X}{:02X}{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+        guid[3],
+        guid[2],
+        guid[1],
+        guid[0],
+        guid[5],
+        guid[4],
+        guid[7],
+        guid[6],
+        guid[8],
+        guid[9],
+        guid[10],
+        guid[11],
+        guid[12],
+        guid[13],
+        guid[14],
+        guid[15]
+    )
+}
 pub fn parse_guid(text: &str) -> Option<[u8; 16]> {
     let bytes = text.as_bytes();
     if bytes.len() != 36 || [8, 13, 18, 23].iter().any(|&i| bytes[i] != b'-') {
@@ -389,16 +438,13 @@ pub fn parse_guid(text: &str) -> Option<[u8; 16]> {
         canonical[15],
     ])
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn crc32_matches_standard_check_value() {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
     }
-
     #[test]
     fn guid_text_is_converted_to_gpt_byte_order() {
         assert_eq!(
@@ -410,7 +456,6 @@ mod tests {
         );
         assert!(parse_guid("0FC63DAF---8483-4772-8E79-3D69D8477DE4").is_none());
     }
-
     #[test]
     fn partition_parser_rejects_overlapping_ranges() {
         let mut entries = [0u8; 256];
@@ -438,7 +483,6 @@ mod tests {
             Err(GptError::OverlappingPartitions)
         );
     }
-
     #[test]
     fn generated_layout_round_trips_through_parser() {
         let partition = GptPartition {
@@ -458,5 +502,71 @@ mod tests {
         );
         assert_eq!(image.backup_entries, image.primary_entries);
         assert_eq!(&image.protective_mbr[510..512], &[0x55, 0xAA]);
+    }
+    #[test]
+    fn written_gpt_layout_matches_serialized_pieces() {
+        let partition = GptPartition {
+            type_guid: [0xAA; 16],
+            unique_guid: [0xBB; 16],
+            first_lba: 2048,
+            last_lba: 4095,
+            attributes: 0,
+        };
+        let image = build_gpt_image(512, 16_384, [0xCC; 16], &[partition]).unwrap();
+        let mut buffer = Vec::new();
+        write_gpt_layout(&mut buffer, &image, 512, 16_384).unwrap();
+        assert_eq!(&buffer[..512], &image.protective_mbr[..]);
+        assert_eq!(&buffer[512..1024], &image.primary_header[..]);
+        assert_eq!(
+            &buffer[1024..1024 + image.primary_entries.len()],
+            &image.primary_entries[..]
+        );
+        let backup_entries_offset = image.backup_entries_lba as usize * 512;
+        assert_eq!(
+            &buffer[backup_entries_offset..backup_entries_offset + image.backup_entries.len()],
+            &image.backup_entries[..]
+        );
+        assert_eq!(&buffer[16_383 * 512..], &image.backup_header[..]);
+    }
+    #[test]
+    fn guid_string_uses_gpt_mixed_endian_text_form() {
+        assert_eq!(
+            guid_string([
+                0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47, 0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47,
+                0x7D, 0xE4
+            ]),
+            "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+        );
+    }
+    #[test]
+    fn format_ext4_initializes_valid_superblock_and_root() {
+        let mut buffer = Vec::new();
+        let total_blocks = 2048u64;
+        let uuid = [0x42; 16];
+        let mut vol = format_ext4(&mut buffer, 0, total_blocks, "LIXOS_ROOT", uuid).unwrap();
+        assert_eq!(&buffer[1024 + 56..1024 + 58], &[0x53, 0xEF]);
+        assert_eq!(&buffer[1024 + 108..1024 + 124], &uuid);
+        let (bin_ino, bin_block) = vol
+            .mkdir(&mut buffer, vol.root_dir_block, 2, "bin")
+            .unwrap();
+        assert_eq!(bin_ino, 12);
+        let file_ino = vol
+            .write_file(&mut buffer, bin_block, "hello.txt", b"Hello LixOS", false)
+            .unwrap();
+        assert_eq!(file_ino, 13);
+    }
+    #[test]
+    fn format_esp_initializes_valid_fat32_volume() {
+        let mut buffer = Vec::new();
+        let files = EspFiles {
+            bootloader: b"mock_bootloader",
+            config: b"timeout: 0\n",
+            kernel: b"mock_kernel",
+            initrd: b"mock_initrd",
+        };
+        let partition_bytes = 512 * 1024 * 1024u64;
+        format_esp(&mut buffer, 512, 0, partition_bytes, 0, 0x12345678, files).unwrap();
+        assert_eq!(&buffer[510..512], &[0x55, 0xAA]);
+        assert_eq!(&buffer[82..87], b"FAT32");
     }
 }
