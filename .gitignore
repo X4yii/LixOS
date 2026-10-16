@@ -1,25 +1,21 @@
-# Cargo / Rust
 target/
-
-# OS Build & Images
+.github/
 *.iso
 *.img
 *.bin
 *.elf
 *.o
+*.fw
 
-# Limine & Firmware assets
 limine/
 ovmf/
 OVMF*
 
-*.md
-
-# La documentación del proyecto sí se versiona
-!docs/**/*.md
-
-# IDE / Editor
 .vscode/
 .idea/
 *.swp
 *~
+*.md
+
+!docs/**/*.md
+!README.md

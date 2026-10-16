@@ -52,6 +52,12 @@ Proceso A                       Kernel
 | 17 | `AUTH` | verificar credenciales (solo `authd`) |
 | 18 | `LOG` | escribir en el log del kernel |
 | 19 | `ELEVATE` | solicitar elevación a `authd` (ver 7) |
+| 20 | `NET_READ` | consultar enlaces y redes visibles |
+| 21 | `NET_ADMIN` | configurar interfaces y perfiles de red |
+| 22 | `BLUETOOTH_READ` | enumerar controladores/dispositivos Bluetooth |
+| 23 | `BLUETOOTH_ADMIN` | emparejar y administrar perfiles Bluetooth |
+| 24 | `SECRET_USE` | usar un secreto de bóveda para una operación autorizada; no leer bytes de clave |
+| 25 | `NET_CONNECT` | crear sockets de red para tráfico autorizado por el sistema |
 
 Cada tipo de objeto define qué derechos tienen sentido. Los demás se rechazan al crear el handle.
 
@@ -87,6 +93,10 @@ Namespace de la sesión de "ana":
 
 ## 6. Revocación Activa (Syscalls y Memoria Virtual)
 
+> **Reservado, sin implementar.** Las syscalls de este apartado **no existen hoy en el ABI**: `sys_revoker_create` (`0x007`) y `sys_revoker_revoke` (`0x008`) fueron retiradas de `abi/syscalls.toml` porque no tienen handler en el kernel. Sus IDs quedan **reservados** y no se reutilizan (regla 5 de [syscall-abi.md](syscall-abi.md)). Los objetos de revocación, los *reverse mappings* y el TLB shootdown que se describen abajo son **diseño de referencia**, no comportamiento actual. Lo que sí existe hoy está documentado en la §13.7.
+>
+> En la misma situación se encuentran `sys_vmo_create` (`0x200`) y `sys_vm_map` (`0x202`): reservados, sin handler. Por eso el derecho `MAP` de la §3 está declarado pero todavía no se aplica en ninguna operación de mapeo.
+
 - `sys_revoker_create` devuelve un objeto `Revoker` que controla un flag atómico `Arc<AtomicBool>` y una lista de mapeos activos (*reverse mappings*).
 - `sys_handle_dup_revocable(h, rights, rev)` crea un handle ligado a ese `Revoker`.
 - `sys_revoker_revoke(rev)` activa el flag y ejecuta la invalidación:
@@ -109,15 +119,15 @@ No existe el usuario todopoderoso. El kernel crea `init` con **todas** las capab
 | Gestor de energía | `POWER` | `shutdown` y `reboot` |
 | Instalador | `DEVICES` (solo en LiveISO) | escribir en el disco elegido |
 
-### `vdo` (reemplazo de `sudo`)
-1. El usuario ejecuta `vdo <comando>`. El programa **no** es privilegiado.
-2. `vdo` envía la petición a `authd` por un canal y le pasa las credenciales (contraseña) a través de un canal privado.
-3. `authd` verifica con Argon2id (ADR-10) y comprueba que el usuario pertenezca al grupo administrador.
-4. Si es válido, **`authd` crea el proceso hijo** con un **namespace ampliado y los handles necesarios** (por ejemplo, escritura en `/etc` o `POWER`), todos creados con `dup_revocable`.
-5. `authd` arma un temporizador. Al vencer (por defecto 5 min), llama `revoker_revoke` y el proceso pierde sus privilegios extra sin matarse.
-6. Cada elevación se registra: usuario, comando, handles concedidos, resultado.
+### `vdo` (reemplazo de `sudo`) y `su0`
+1. El usuario ejecuta `vdo <comando>`; `sudo` puede ser un alias compatible. El proceso y su hijo permanecen en Ring 3.
+2. `vdo` pide a `authd` una concesión limitada y presenta la credencial por un canal privado.
+3. `authd` verifica con Argon2id (ADR-10), aplica política/grupo y crea el hijo con namespace ampliado y handles estrictamente necesarios, ligados a `dup_revocable`.
+4. Al vencer el plazo, authd revoca los handles; la aplicación no adquiere autoridad por cambio de UID/CPL.
+5. `su0` solicita una sesión administrativa aprobada por authd con un conjunto más amplio, explícito y auditable de capabilities. `su0` **no** ejecuta código en Ring 0.
+6. Toda concesión registra identidad, programa, capacidades, duración y resultado; nunca registra credenciales.
 
-No existe `setuid`: un binario no puede ganar privilegios por sí mismo, solo `authd` puede entregarlos.
+x86 con paginación clasifica CPL 0, 1 y 2 como supervisor. Por eso Ring 1 no sirve como frontera segura para aplicaciones ni como “sudo”; Ring 0 pertenece al kernel. No existe `setuid` ni ELF de usuario privilegiado. Solo authd puede conceder capacidades elevadas y siempre en Ring 3.
 
 ## 8. Metadatos de archivo (compatibilidad)
 
@@ -146,7 +156,7 @@ El kernel registra en klog (con rate-limit) cada: creación de namespace, `spawn
 
 ## 13. Implementación actual
 
-Comportamiento observado en `kernel/src/task/handle.rs`. Los apartados siguientes describen hechos del código; no modifican la especificación de las secciones anteriores.
+Comportamiento observado en `kernel/src/task/handle.rs`. Los apartados siguientes describen hechos del código; no modifican la especificación de las secciones anteriores. La carga de ELF se fuerza a Ring 3; init/bootstrap y la concesión real de capabilities aún no existen.
 
 ### 13.1 Tipos de objeto
 
@@ -157,6 +167,8 @@ pub enum KernelObject {
     StdErr,
     File { path: String, cursor: u64, is_write: bool },
     Process(ProcessId),
+    InputDevice { class: u32 },
+    BlockDevice(Arc<BlockDeviceCapability>),
 }
 ```
 
@@ -202,3 +214,43 @@ La tabla se expande en bloques a partir de una capacidad inicial de 16 entradas.
 - Un índice fuera de rango o una generación no coincidente devuelven `EBADF`.
 - `requested_rights == 0` conserva el conjunto completo; en otro caso se aplica la intersección con el conjunto original.
 - Los slots se reutilizan antes de crecer la tabla.
+
+### 13.7 Autoridad efectiva hoy: `Process.rights` y el enforcement del dispatcher
+
+Lo que sí está implementado (y es verificable en el árbol) es una capa de autoridad a **dos niveles**, distinta del modelo completo de las §5–§7:
+
+**(a) Derechos del proceso.** Cada `Process` lleva `rights: lix_sys::Rights` (`kernel/src/task/process.rs`), calculado en el arranque del ELF por **declaración ∩ lanzador** (`kernel/src/task/rights.rs::grant_for`, aplicado en `kernel/src/task/elf.rs::load_elf`): `rights = declared(path) & launcher_rights`. Ni la ruta por sí sola eleva (un binario de sistema lanzado por una aplicación corriente sólo obtiene lo que la aplicación ya tenía), ni un lanzador sin derechos puede otorgarlos.
+
+| Máscara | Valor | Quién la recibe |
+| --- | --- | --- |
+| `KERNEL` | `Rights(u32::MAX)` | los hilos de kernel creados en `kernel/src/task/scheduler/spawn.rs` (y por tanto `init`, que es quien lanza `vanish`) |
+| `SYSTEM` | `BASE_USER \| INSPECT \| MANAGE \| DEVICES \| POWER` | los ELF bajo `/bin/system/` y `/bin/services/` **sólo si su lanzador ya los poseía** (`rights::declared`) |
+| `SESSION` | `SYSTEM` (sin `AUTH`) | `vanish`, cuyo binario declara `SESSION` y que es lanzado por `init` o por la propia shell |
+| `BASE_USER` | derechos ordinarios (ver abajo) | cualquier otro binario: es el suelo que recibe todo hijo de `sys_process_spawn` |
+
+`BASE_USER` incluye `READ`, `WRITE`, `EXEC`, `DUP`, `TRANSFER`, `WAIT`, `SIGNAL`, `MAP`, `ENUMERATE`, `TRAVERSE`, `SPAWN`, `DISPLAY_OWN`, `INPUT_READ`, `LOG`, `NET_READ` y `NET_CONNECT`; **no** incluye `MANAGE`, `INSPECT`, `DEVICES`, `POWER`, `AUTH`, `ELEVATE` ni `NET_ADMIN`. `AUTH` queda fuera también de `SESSION`: es la llave de los ficheros marcados como secretos en `fs::permissions` y la shell no debe poder leerlos.
+
+Dos controles que antes vivían en la tabla y ahora viven en el kernel, porque en la tabla eran inalcanzables o demasiado amplios:
+
+- `sys_process_kill` y `sys_waitpid` se declaran `rights = "NONE"` y el handler comprueba «hijo propio, uno mismo, o `MANAGE`» (`kernel/src/task/syscall/proc.rs`). Exigir `MANAGE` en la tabla habría obligado a repartir `MANAGE` a todo programa que quiera recoger a un hijo; el progenitor se guarda en `Process.parent_pid`.
+- `sys_block_open` deja de mirar `privilege_level <= 1` (imposible de satisfacer: `spawn_user_process` exige `privilege == 3`) y exige el derecho `DEVICES` (`kernel/src/task/syscall/block.rs::installer_privilege`).
+
+**(a′) La consola tiene un solo dueño.** `sys_read`/`sys_read_nonblocking` sobre `fd == 0` sólo sirven al proceso en primer plano (`FOREGROUND_TASK`) o, cuando no lo hay, a la shell; el resto recibe `EAGAIN` (`kernel/src/task/syscall/io.rs::owns_console`). Así ningún proceso en segundo plano puede leer lo que el usuario teclea para la shell.
+
+**(b) Comprobación por syscall.** El dispatcher (`kernel/src/task/syscall/mod.rs`) traduce el nombre `required_rights` de la fila generada (`kernel/src/task/syscall_table.rs`, origen `abi/syscalls.toml`) con `rights::required()` y, **antes** de ejecutar el handler, exige que `Process.rights` contenga ese derecho: si falta, devuelve `-EACCES`; si el nombre no corresponde a un derecho conocido, también `-EACCES`. Una syscall sin fila registrada devuelve `-ENOSYS`.
+
+**(c) Prefijos protegidos del VFS.** `kernel/src/fs/permissions.rs` añade una autorización por **ruta** independiente de los handles, aplicada en las syscalls con argumento de ruta de `kernel/src/task/syscall/io.rs` (`sys_list_dir`, `sys_read_file`, `sys_write_file`, `sys_remove_file`, `sys_mkdir`):
+
+| Regla | Comportamiento |
+| --- | --- |
+| `PROTECTED_PREFIXES` | `/bin`, `/boot`, `/etc`, `/lib`, `/usr`, `/root` (la propia y cualquier ruta por debajo) |
+| Ruta relativa | `EINVAL` (toda ruta debe empezar por `/`) |
+| Componente `..` | `EACCES` |
+| Escritura en `/` | `EACCES` |
+| Escritura bajo un prefijo protegido | exige el derecho `AUTH`; sin él, `EACCES` |
+| Escritura ordinaria | exige `WRITE`; lectura, exige `READ` (`kernel/src/fs/permissions.rs::authorize_read/write/remove`) |
+
+Los errores de fichero se traducen a `errno` en `kernel/src/fs/error.rs` (`FsError → ErrorCode`).
+
+**Límites de lo anterior.** No sustituye al modelo de las §5–§7: siguen sin existir namespaces de proceso, revokers, transferencia de handles por IPC y concesión inicial por parte de `init`. La autoridad efectiva hoy es «derechos globales del proceso + prefijos de ruta del VFS», no «handles como única autoridad».
+

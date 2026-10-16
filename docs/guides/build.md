@@ -7,27 +7,58 @@ Describe el workspace, la toolchain, las tareas de `xtask` y la composición de 
 
 ## 1. Estructura del workspace
 
-`Cargo.toml` declara 13 miembros:
+`Cargo.toml` declara 21 miembros:
 
 | Ruta | Crate | Función |
 | --- | --- | --- |
 | `xtask` | `xtask` | Driver de compilación e imágenes |
 | `kernel` | `kernel` | Kernel `#![no_std]` |
-| `libs/lix-sys` | `lix-sys` | Tipos, constantes y números de syscall |
+| `libs/lix-sys` | `lix-sys` | Tipos, constantes y números de syscall (`src/syscalls.rs` generado) |
 | `libs/sys-libc` | `sys-libc` | Capa de compatibilidad C/POSIX |
-| `libs/lix-ui` | `lix-ui` | Framework gráfico de aplicaciones |
+| `libs/lix-storage` | `lix-storage` | GPT, particiones y utilidades de almacenamiento |
+| `libs/lix-net` | `lix-net` | Ethernet, ARP, IPv4, UDP, TCP, DNS, DHCP y checksums |
+| `libs/lix-wifi` | `lix-wifi` | Descriptores y primitivas ath9k_htc |
+| `libs/lix-bluetooth` | `lix-bluetooth` | Codificación/parseo de comandos y eventos HCI |
+| `libs/lix-usb` | `lix-usb` | Parseo de descriptores e informes USB |
+| `libs/lix-edit` | `lix-edit` | Lógica de edición compartida por el editor |
 | `services/authd` | `authd` | Servicio de autenticación |
+| `services/netmgr` | `netmgr` | Gestor de interfaces y perfiles de red |
+| `services/bluetoothd` | `bluetoothd` | Gestor de controladores HCI |
 | `services/lix-compositor` | `lix-compositor` | Compositor en userspace |
 | `userland/vanish` | `vanish` | Shell de espacio de usuario |
-| `userland/lix-shell` | `lix-shell` | Shell gráfica |
+| `userland/edit` | `edit` | Editor de texto |
 | `userland/ltop` | `ltop` | Gestor de tareas en TUI |
+| `userland/lixinstall` | `lixinstall` | Instalador en userspace |
 | `pkg/pml` | `pml` | Gestor de paquetes |
-| `tools/lix-installer` | `lix-installer` | Instalador |
+| `tools/lix-installer` | `lix-installer` | Instalador / generador de imágenes |
 | `tools/lix-mkiso` | `lix-mkiso` | Constructor de ISO |
 
-`libs/litui` **no** es miembro del workspace: es un submódulo git con su propio workspace (`litui-core`, `litui-widgets`, `litui`) consumido por `ltop` mediante dependencias de ruta.
+`libs/litui` **no** es miembro del workspace: es un submódulo git con su propio workspace (`litui-core`, `litui-widgets`, `litui`) consumido por `ltop` mediante dependencias de ruta. Los crates `libs/lix-ui` y `userland/lix-shell` fueron **retirados** del árbol.
 
 Paquetes con valores propios: `edition = "2024"` y `rust-version = "1.85.0"` en `[workspace.package]`.
+
+### 1.1 Módulos del kernel
+
+`kernel/src/` se organiza en: `arch/` (x86_64: idt, gdt, apic, smp, percpu…), `boot/` (peticiones Limine y `BootInfo`), `drivers/`, `fs/` (`vfs`, `ext4`, `tar`, `permissions`, `error`), `klog/`, `memory/` (`pmm`, `vmm`…), `shell/`, `sync/`, `task/` y `panic.rs`/`power.rs`. `task/` contiene:
+
+```
+kernel/src/task/
+├── scheduler.rs            raíz del módulo: planificador, señales, dispatcher de eventos
+│   ├── metrics.rs          contadores de planificación
+│   ├── runqueue.rs         colas MLFQ por CPU
+│   ├── spawn.rs            creación de procesos
+│   └── wait.rs             bloqueo y despertar
+├── syscall/                handlers de syscalls
+│   ├── mod.rs              dispatcher, validación de punteros, MSRs de SYSCALL
+│   ├── block.rs  io.rs  net.rs  proc.rs  term.rs
+├── syscall_table.rs        GENERADO por `cargo xtask codegen` (no editar)
+├── elf.rs  handle.rs  process.rs  rights.rs  mod.rs
+```
+
+`kernel/src/drivers/` contiene `ahci.rs`, `block.rs`, `gpt.rs`, `nvme.rs`, `pci.rs`, `virtio_net.rs`, `net.rs`, `wifi.rs`, `xhci.rs`, `usb.rs`, `input.rs`, `tty.rs`, `serial.rs`, `ps2_keyboard.rs`, `font.rs` y dos módulos con subdirectorio:
+
+- `framebuffer/{mod,theme,render,console,batch,ansi,cursor,hw,grid}.rs` — consola de texto sobre GOP.
+- `keyboard/{mod,shared,es,latam}.rs` — layouts y capa común de entrada.
 
 ### 1.1 Perfiles
 
@@ -59,10 +90,16 @@ El alias es `cargo xtask <comando>`.
 | `help` | Mensaje de uso (valor por defecto) |
 | `build` | Inicializa submódulos, ensambla `.S` en `kernel/asm/` y compila kernel, `ltop` y `vanish` |
 | `check` | `cargo check --workspace` |
+| `codegen` | Regenera `kernel/src/task/syscall_table.rs`, `include/lix/syscall.h` y `libs/lix-sys/src/syscalls.rs` desde `abi/syscalls.toml` |
 | `asm` | Ensambla archivos `.S` en `kernel/asm/` a objetos `.o` en `target/x86_64-unknown-none/asm_objs/` |
 | `deps` | Verifica e instala dependencias del sistema requeridas (`qemu`, `xorriso`, `mtools`, `ovmf`, etc.) |
 | `iso` | Ejecuta `build` y genera `target/lixos.iso` |
 | `run` | Ejecuta `deps`, `iso`, crea la imagen de disco y lanza QEMU |
+| `test-nvme` | Arranque UEFI+NVMe de 512 B y 4 KiB en QEMU con fixtures propios |
+| `bench` / `microbench` | Suite de microbenchmarks con RDTSC |
+| `nvme-image [PATH]` / `nvme-image-4k [PATH]` | Imágenes GPT+ext4 desechables de prueba |
+
+Las pruebas unitarias **no** son una tarea de `xtask`: se ejecutan con `cargo test --workspace`. El formato y los lints también quedan fuera de `xtask` (`cargo fmt --all -- --check`, `RUSTC_BOOTSTRAP=1 cargo clippy --workspace -- -D warnings`) y se ejecutan en CI (§10).
 
 ### 3.1 Banderas de compilación
 
@@ -83,13 +120,16 @@ El kernel se compila en perfil `dev`; `ltop` y `vanish` en `--release`.
 
 ### 3.2 Salidas
 
+`task_build` compila cinco targets (`kernel`, `ltop`, `vanish`, `edit`, `lixinstall`) y después ejecuta `stage_rootfs()`:
+
 | Artefacto | Destino |
 | --- | --- |
-| Kernel | `target/x86_64-unknown-none/debug/kernel` → `target/iso_root/kernel.elf` |
-| `ltop` | `rootfs/ltop.elf` y `rootfs/bin/ltop.elf` |
-| `vanish` | `rootfs/vanish.elf` y `rootfs/bin/vanish.elf` |
+| Kernel | `target/x86_64-unknown-none/debug/kernel` → `rootfs/boot/kernel.elf` y `target/iso_root/kernel.elf` |
+| `ltop`, `lixinstall` (release) | `rootfs/bin/system/*.elf` |
+| `vanish`, `edit` (release) | `rootfs/bin/apps/*.elf` |
+| `BOOTX64.EFI` | `/usr/share/limine/BOOTX64.EFI` → `rootfs/boot/BOOTX64.EFI` (si Limine está instalado) |
 
-Los binarios de userspace se copian con `strip` del host de forma best-effort: si `strip` no existe, se deja el binario sin stripear.
+`stage_rootfs()` borra las copias heredadas (`rootfs/*.elf`, `rootfs/bin/*.elf`, `rootfs/bin/dummy.txt`), crea `/boot`, `/bin/system`, `/bin/apps`, `/etc` y `/home/user`, y escribe `rootfs/etc/kernel.conf` y `rootfs/home/user/notas.txt` solo si no existen. Los binarios de userspace se copian con `strip` del host de forma best-effort: si `strip` no existe, se deja el binario sin stripear.
 
 `init_submodules()` ejecuta `git submodule update --init --recursive` de forma best-effort; se omite si no hay directorio `.git`.
 
@@ -172,26 +212,52 @@ cargo run -p lix-installer -- image target/lixos_installed.img target/x86_64-unk
 
 ## 8. Contenido de `rootfs/`
 
+Lo que `stage_rootfs()` genera y lo que viaja en el initramfs:
+
 ```
 rootfs/
 ├── bin/
-│   ├── dummy.txt          archivo de prueba
-│   ├── hello.elf          binario C de prueba
-│   ├── ltop.elf           copia de build
-│   └── vanish.elf         copia de build
+│   ├── apps/
+│   │   ├── edit.elf          copia de build (stripped)
+│   │   ├── vanish.elf        copia de build (stripped)
+│   │   └── hello.elf         binario C de prueba (heredado; se migra desde bin/hello.elf)
+│   └── system/
+│       ├── ltop.elf          copia de build (stripped)
+│       └── lixinstall.elf    copia de build (stripped)
+├── boot/
+│   ├── kernel.elf            copia del kernel compilado
+│   └── BOOTX64.EFI           copia de /usr/share/limine (si existe)
 ├── etc/
-│   └── keyboard.conf      disposición de teclado (KEYMAP=latam)
-├── src/
-│   └── hello.c            fuente del binario de prueba
-├── ltop.elf               copia en la raíz
-└── vanish.elf             copia en la raíz
+│   ├── keyboard.conf         disposición de teclado (KEYMAP=latam)
+│   └── kernel.conf           HOSTNAME/SCHEDULER/LOGLEVEL/RING (si no existía)
+├── home/user/
+│   └── notas.txt             contenido inicial del directorio personal
+├── lib/firmware/ath9k_htc/   firmware htc_9271-1.4.0.fw y su licencia
+├── src/hello.c               fuente del binario de prueba
+└── usr/share/licenses/       licencias empaquetadas
 ```
 
 - `rootfs/etc/keyboard.conf` se lee en el arranque mediante `drivers::keyboard::load_config_from_vfs()` (ver [boot.md](../design/boot.md) §2 y [console.md](../design/console.md) §2.3). Documenta las 12 disposiciones disponibles y fija `KEYMAP=latam`.
-- `rootfs/src/hello.c` es un binario de espacio de usuario mínimo que usa `int $0x80` con la numeración `1` (escritura) y `60` (salida); su fuente documenta el uso del camino de interrupción descrito en [syscall-abi.md](../spec/syscall-abi.md).
+- `rootfs/src/hello.c` es un binario de espacio de usuario mínimo que usa `int $0x80`; su salida estándar llama al número `1`, que **ya no** es `write` en el ABI actual (es `sys_handle_close`), mientras que `60` sí se resuelve a `sys_process_exit` vía alias. Ver [syscall-abi.md](../spec/syscall-abi.md) §8 y §10.6.
+- Las copias heredadas `rootfs/*.elf`, `rootfs/bin/*.elf` y `rootfs/bin/dummy.txt` se eliminan en cada build.
 
 Las extensiones `*.elf`, `*.iso`, `*.img` y el directorio `target/` están excluidos del repositorio por `.gitignore`.
 
 ## 9. Comprobación estática
 
-`cargo xtask check` ejecuta `cargo check --workspace` con `RUSTC_BOOTSTRAP=1` y es la comprobación de tipos y sintaxis del árbol completo. No existe ninguna tarea de `fmt` o `clippy` en `xtask`.
+`cargo xtask check` ejecuta `cargo check --workspace` con `RUSTC_BOOTSTRAP=1` y es la comprobación de tipos y sintaxis del árbol completo. No existe ninguna tarea de `fmt` o `clippy` en `xtask`: esos comandos se invocan directamente y viven en el pipeline de CI.
+
+## 10. Integración continua
+
+`.github/workflows/ci.yml` define el pipeline (detalle en [testing.md](testing.md)):
+
+| Job | Comando | Propósito |
+| --- | --- | --- |
+| `fmt` | `cargo fmt --package <paquetes propios> -- --check` | formato (sin `libs/litui`: submódulo con licencia propia) |
+| `clippy` | `RUSTC_BOOTSTRAP=1 cargo clippy --workspace --all-targets -- -D warnings` | lints y tipos del workspace |
+| `codegen-drift` | `cargo xtask codegen` + `git diff --exit-code` | **impide que el ABI se desincronice** |
+| `test` | `cargo test --workspace --locked` | pruebas de usuario y del kernel |
+| `deps` | `cargo xtask deps` | dependencias de sistema + Limine en el runner |
+| `smoke` | `cargo xtask smoke` | kernel + userland + ISO + arranque en QEMU con interacción por serie (`cargo xtask smoke --smp N`, `--no-build` para reutilizar la imagen) |
+
+Todos los jobs usan `actions/checkout@v4` con `submodules: recursive` (necesario para `libs/litui`) y `dtolnay/rust-toolchain@stable` con `components: rust-src, rustfmt, clippy`.

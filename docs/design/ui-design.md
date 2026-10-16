@@ -72,9 +72,9 @@ Comportamiento observado en `libs/` y en los binarios de espacio de usuario. Los
 
 ### 7.1 Estado de LUIX
 
-`libs/lix-ui` es un crate vacío: su `src/lib.rs` contiene únicamente la atribución `#![no_std]` (0 líneas de contenido). No hay código de *widgets*, ni motor de temas, ni integración con un subsistema gráfico.
+`libs/lix-ui` **no existe en el árbol**: el crate fue retirado del repositorio y de la lista de miembros del workspace. En las versiones anteriores era un crate vacío (solo la atribución `#![no_std]`) y tampoco entonces había código de *widgets*, motor de temas ni integración con un subsistema gráfico.
 
-- Es miembro del workspace y `userland/lix-shell/Cargo.toml` lo declara como dependencia de ruta.
+- No es miembro del workspace y ningún `Cargo.toml` lo declara como dependencia de ruta.
 - Ningún archivo `.rs` del árbol contiene `use lix_ui` ni `lix_ui::`.
 
 ### 7.2 `litui`
@@ -89,7 +89,7 @@ Comportamiento observado en `libs/` y en los binarios de espacio de usuario. Los
 
 | Binario | Estado |
 | --- | --- |
-| `userland/lix-shell` | stub: una sola llamada a `println!` |
+| `userland/lix-shell` | **retirado del árbol**: el crate ya no existe |
 | `services/lix-compositor` | stub: una sola llamada a `println!` |
 
 No existen el panel, el lanzador, el gestor de ventanas ni las transiciones descritas en las §3 y §6.

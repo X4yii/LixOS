@@ -1,7 +1,7 @@
 # Gráficos, entrada y shell gráfica
 
 > **Tipo:** diseño · **Estado:** consolidado · **ADR:** 15, 25
-> **Relacionado:** [ABI de syscalls §4.7](../spec/syscall-abi.md) · [Diseño de interfaz](ui-design.md) · [Consola](console.md)
+> **Relacionado:** [ABI de syscalls §6.4](../spec/syscall-abi.md) · [Diseño de interfaz](ui-design.md) · [Consola](console.md)
 
 Define la arquitectura gráfica en capas: `lix-drm` en el kernel (KMS y VMOs), micro-compositor en userspace con presentación Zero-Copy, y shell gráfica.
 
@@ -119,19 +119,19 @@ El único camino de dibujo en el kernel es `kernel/src/drivers/framebuffer/` sob
 | Teclado PS/2 | IRQ1, puerto `0x60`, con cambio de disposición en caliente ([console.md](console.md) §2.3) |
 | Ratón o puntero | no hay driver; no se lee el puerto `0x64` ni se habilita el canal auxiliar |
 | `InputEvent` normalizado | no existe |
-| `sys_input_open` (`0x705`) | declarado en `lix-sys`, sin handler en el dispatcher |
+| `sys_input_open` (`0x705`) | declarado y con handler (`term::sys_input_open`); exige el derecho `INPUT_READ` |
 
 ### 8.3 Syscalls de pantalla
 
-Los números `0x700` (`sys_display_info`), `0x701` (`sys_display_acquire`), `0x702` (`sys_display_present`) y `0x705` (`sys_input_open`) están declarados en `libs/lix-sys/src/lib.rs` pero **no tienen handler** en `kernel/src/task/syscall.rs`. Los handlers presentes en el rango `0x07xx` son los de consola de texto: `0x703`, `0x704`, `0x706`, `0x707` (ver [syscall-abi.md](../spec/syscall-abi.md) §10).
+Los números `0x700` (`sys_display_info`) y `0x702` (`sys_display_present`) estuvieron en `abi/syscalls.toml` y **fueron retirados**: hoy son IDs reservados sin implementar (ver [syscall-abi.md](../spec/syscall-abi.md) §7). `0x701` (`sys_display_acquire`) nunca llegó a declararse. El rango `0x07xx` contiene hoy cinco llamadas **declaradas y con handler**, todas de consola de texto o de entrada: `0x703` (`sys_terminal_info`), `0x704` (`sys_terminal_set_scale`), `0x705` (`sys_input_open`), `0x706` (`sys_set_keymap`) y `0x707` (`sys_get_keymap`) ([syscall-abi.md](../spec/syscall-abi.md) §6.4). `sys_display_acquire`, `sys_display_release` y `sys_display_wait_frame` siguen pendientes del subsistema de presentación de la ADR-25.
 
 ### 8.4 Procesos gráficos
 
 | Crate | Estado |
 | --- | --- |
 | `services/lix-compositor` | stub: una sola llamada a `println!` |
-| `userland/lix-shell` | stub: una sola llamada a `println!` |
-| `libs/lix-ui` | crate vacío (`src/lib.rs` con solo `#![no_std]`) |
+| `userland/lix-shell` | **retirado del árbol**: el crate ya no existe en el repositorio |
+| `libs/lix-ui` | **retirado del árbol**: el crate ya no existe en el repositorio |
 | `libs/litui` | submódulo git real (`litui-core`, `litui-widgets`, `litui`, 72 archivos `.rs`); se usa como toolkit TUI de terminal en `userland/ltop`, no como toolkit gráfico |
 
 No hay IPC de ventanas, ni protocolo cliente/compositor, ni canal de presentación.

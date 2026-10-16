@@ -1,0 +1,106 @@
+# Excepciones a la licencia de LixOS
+
+> **Relacionado:** [LICENSE](LICENSE) · [ADR-16: Licencia y modelo de distribución](docs/adr/decisions.md) · [TRADEMARK.md](TRADEMARK.md)
+> **Estado:** política de licencia vigente, pendiente de aplicación completa (ver §4)
+
+Este documento recoge las **excepciones** a la GNU General Public License versión 2 que se aplican a LixOS, tal como las fija ADR-16 (`docs/adr/decisions.md`). No modifica ni sustituye a `LICENSE`: complementa su texto.
+
+**Esto no es asesoría legal.** ADR-16 recomienda expresamente una revisión profesional antes del primer release público.
+
+---
+
+## 0. Licencia base
+
+Todo el código de este repositorio —kernel, shell, utilidades, servicios y sistema base— se distribuye bajo los términos de la **GNU General Public License, versión 2** (`LICENSE`).
+
+La cadena `LICENSE` contiene el texto íntegro y verbatim de la GPLv2, sin añadidos ni enmiendas.
+
+Las dos excepciones de este documento se aplican **sobre** esa licencia base:
+
+1. §1 — Excepción de la interfaz de syscalls (estilo Linux).
+2. §2 — Excepción de enlace para `sys-libc`, `lix-sys` y `include/lix/*` (estilo *GCC Runtime Library Exception*).
+
+---
+
+## 1. Excepción de interfaz de syscalls (estilo Linux)
+
+**En castellano:** usar LixOS desde un programa de usuario **no** convierte ese programa en obra derivada ni lo sujeta a la GPL.
+
+> **Excepción de syscall.** Los programas de usuario que interactúan con LixOS únicamente a través de la interfaz de llamadas al sistema (números de syscall, convención de registros, estructuras y constantes del ABI publicado en `abi/syscalls.toml` y `include/lix/syscall.h`) **no quedan sujetos a la GNU General Public License por el mero hecho de usar esa interfaz**, y la licencia que elijan para su propio código no queda contaminada por ella.
+
+**Alcance:**
+
+- La excepción cubre el **uso** de la interfaz de syscalls: invocar llamadas al sistema, leer sus códigos de retorno, copiar las constantes y *layouts* publicados y enlazar contra cualquier biblioteca que a su vez la use.
+- La excepción **no** cubre la incorporación de código fuente del kernel, de `sys-libc`, de `lix-sys` ni de cualquier otro componente de LixOS a un programa bajo otra licencia: eso es enlace o copia, y se rige por el §2.
+- Un programa que use la interfaz de syscalls sigue pudiendo elegir cualquier licencia para su propio código, incluidas licencias propietarias. LixOS no reclama ningún derecho sobre ese programa.
+
+**Equivalencia:** es la misma excepción que el kernel Linux declara para su ABI (*Linux syscall note*), adaptada a la numeración y a los nombres de LixOS. El texto canónico en inglés es el siguiente y se considera parte de este documento:
+
+> **Linux syscall note:** As a special exception, if you use the LixOS system call
+> interface (the "System Call Interface") as described in `abi/syscalls.toml` and
+> `include/lix/syscall.h`, and link your program with files compiled using LixOS
+> headers that only expose that interface, your program is not considered a
+> derivative work of LixOS solely because it uses the System Call Interface, and
+> is not subject to the GNU General Public License version 2
+> by virtue of such use. This exception does not limit your obligations
+> under any other license covering other LixOS code you may have linked or copied.
+
+---
+
+## 2. Excepción de enlace para `sys-libc`, `lix-sys` y `include/lix/*`
+
+**Objeto de la excepción:**
+
+| Componente | Ruta |
+| --- | --- |
+| libc de LixOS | `libs/sys-libc/` |
+| bindings Rust del ABI | `libs/lix-sys/` (incluido `src/syscalls.rs`, generado) |
+| Cabeceras C | `include/lix/*` (incluido `syscall.h`, generado) |
+
+**Elección del proyecto (cerrada):** el proyecto se licencia íntegramente bajo **GPLv2** (`LICENSE`, `Cargo.toml: license = "GPL-2.0-only"`) y ADR-16 escoge la *excepción de enlace estilo GCC Runtime Library Exception* sobre esa licencia base. La consecuencia práctica que motiva la excepción es la que fija ADR-16: `v1.0` enlaza estáticamente, de modo que una libc GPL sin excepción impondría la GPL a todo programa compilado para LixOS. Por eso estos tres componentes **no** se aplican a los programas que los usan.
+
+> **Excepción de enlace (estilo GCC Runtime Library Exception).** Como excepción especial a los términos de la GPLv2, se permite a cualquier persona enlazar nuestros archivos (`sys-libc`, `lix-sys` y las cabeceras de `include/lix/`) con programas independientes, independientemente de la licencia de esos programas, para producir un ejecutable, y distribuir ese ejecutable, sin que la GPLv2 se aplique al ejecutable ni a su fuente, siempre que se cumpla una de estas condiciones:
+>
+> 1. El enlace se hace con los archivos mencionados en su forma original (sin modificaciones), o modificados de modo que el uso de la excepción no sea evadido; **o**
+> 2. El enlace se hace con una versión modificada de los archivos mencionados, y el ejecutable resultante se publica con el código fuente de las modificaciones de esos archivos.
+>
+> La excepción **no** extiende a ningún otro componente de LixOS. El kernel, la shell, los servicios y las utilidades siguen siendo GPLv2 íntegros.
+
+Esto es análogo a la *GCC Runtime Library Exception*: la biblioteca lleva la GPL, pero enlazarla no impone la GPL a tu programa, salvo que modifiques la propia biblioteca (en cuyo caso publicas esas modificaciones bajo la GPL).
+
+---
+
+## 3. Decisión de licencia (D-G: cerrada)
+
+ADR-16 registraba como deuda **D-G** la elección final de licencia de la libc:
+
+> *«Elección final de licencia de la libc (excepción GPL o LGPL) — Antes del primer release público.»*
+
+**Decisión tomada: GPLv2 con excepción de enlace estilo *GCC Runtime Library Exception* (opción (a) de ADR-16).**
+Todo el repositorio es `GPL-2.0-only`; la libc (`libs/sys-libc/`, `libs/lix-sys/`, `include/lix/*`)
+recibe además la excepción de enlace del §2. No se usa LGPL en ningún componente.
+La deuda D-G queda **cerrada** y este documento no depende de ninguna elección pendiente.
+
+---
+
+## 4. SPDX por archivo (pendiente de aplicación)
+
+ADR-16 establece como consecuencia de la decisión que **cada archivo lleve su cabecera `SPDX-License-Identifier`**. La aplicación de esas cabeceras es un requisito de ADR-16 y está **pendiente de aplicación**: todavía no se han escrito en los archivos fuente.
+
+Cuando se aplique, las cabeceras esperadas son:
+
+| Alcance | Cabecera |
+| --- | --- |
+| Kernel, servicios, userland, tools, xtask, libs no cubiertas por el §2 | `SPDX-License-Identifier: GPL-2.0-only` |
+| `libs/sys-libc/`, `libs/lix-sys/`, `include/lix/*` | `SPDX-License-Identifier: GPL-2.0-only` **más** la referencia a la excepción de enlace del §2 |
+
+Hasta entonces, este archivo y `LICENSE` son la fuente de verdad de la política de licencia del repositorio.
+
+---
+
+## 5. Límites de este documento
+
+- Nada aquí exime de conservar los avisos de copyright y de licencia originales.
+- Las excepciones se aplican solo a los componentes y usos descritos explícitamente; cualquier caso no contemplado se rige por la GPLv2 sin excepción.
+- `TRADEMARK.md` es independiente de la licencia: la GPLv2 no concede derechos sobre el nombre ni la marca «LixOS».
+- Este documento no modifica la GPLv2; si entra en conflicto con ella en algo que no sea una excepción concedida aquí, prevalece la GPLv2.

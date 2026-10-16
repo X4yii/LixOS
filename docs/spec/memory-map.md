@@ -173,7 +173,7 @@ Este es el único punto en el que la regla W^X de la §4.1 se aplica hoy: se val
 
 ### 5.7 Validación de rangos
 
-`validate_user_buffer` en `kernel/src/task/syscall.rs` fija el límite inferior en `0x1000` (una página) y el superior en `0x0000_8000_0000_0000`; la guarda inferior de la §3 (4 MB) no se aplica en esta función.
+`validate_user_buffer` en `kernel/src/task/syscall/mod.rs` fija el límite inferior en `USER_ADDRESS_START` (`0x0000_0000_0040_0000`, 4 MB) y el superior en `USER_ADDRESS_END` (`0x0000_8000_0000_0000`); la guarda inferior de la §3 **ya sí se aplica** en esta función (ver [syscall-abi.md](syscall-abi.md) §9).
 
 ### 5.8 Paginación y CPU
 

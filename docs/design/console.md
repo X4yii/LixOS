@@ -173,7 +173,7 @@ Atajos producidos por la capa de disposición (antes de llegar al consumidor):
 | `>= 0x20`, `\n`, `0x08`, `0x1B`, `\t`, `0x11..=0x14` | tal cual |
 | resto | se descarta |
 
-Se invoca desde `arch::x86_64::halt_loop()` en cada iteración ociosa y desde el manejo de `sys_read` (`0x301`) en `kernel/src/task/syscall.rs`.
+Se invoca desde `arch::x86_64::halt_loop()` en cada iteración ociosa y desde el manejo de `sys_read` (`0x301`) en `kernel/src/task/syscall/io.rs`.
 
 ---
 

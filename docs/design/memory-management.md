@@ -170,6 +170,6 @@ El `#[global_allocator]` es un `linked_list_allocator::LockedHeap`, no una cach�
 | §4 | contabilidad estricta, cuotas por proceso, OOM killer | no hay contadores de uso por proceso |
 | §5 | presupuesto para 4 GB | sin instrumentación que lo verifique |
 | §6 | línea base de frames, redzones, canarios, Miri, `loom` | sin tests en `kernel/` |
-| §7 | `/dev/meminfo`, `meminfo` en Vanish, eventos OOM | ni el nodo de dispositivo ni la salida existen; sí están `pmm::memory_stats() -> (total, libre)` y `vfs::disk_io_stats()`, consultables con `sys_monitor_metrics` (`0x80A`, ver [syscall-abi.md](../spec/syscall-abi.md) §10.12) |
+| §7 | `/dev/meminfo`, `meminfo` en Vanish, eventos OOM | ni el nodo de dispositivo ni la salida existen; sí están `pmm::memory_stats() -> (total, libre)` y `vfs::disk_io_stats()`, consultables con `sys_monitor_metrics` (`0x80A`, ver [syscall-abi.md](../spec/syscall-abi.md) §10.5) |
 
 La §7 asume además un montaje de `ext4`; `kernel/src/fs/ext4.rs` existe, pero no expone ninguna métrica por sí mismo: los contadores de E/S viven en `kernel/src/fs/vfs.rs` (`DISK_READ_OPS`, `DISK_READ_BYTES`) y se acumulan en `record_disk_read`.

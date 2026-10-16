@@ -114,7 +114,7 @@ Estado: `ACEPTADA` = cerrada para v1.0. `DIFERIDA` = se decide con datos (ver «
 
 **Riesgos aceptados:** `printf`, `malloc` y `stdio` correctos y rápidos llevan meses; `pthread` y TLS dependen de decisiones del kernel (ADR-02). Mitigación: tests contra programas reales desde las primeras versiones, y priorizar el comportamiento por encima de cubrir toda la API.
 
-**Licencia:** ver ADR-16. La libc **no puede ser GPLv3 pura**.
+**Licencia:** ver ADR-16. La libc **no puede ser GPLv2 pura**.
 
 ---
 
@@ -242,16 +242,16 @@ Estado: `ACEPTADA` = cerrada para v1.0. `DIFERIDA` = se decide con datos (ver «
 ## ADR-16: Licencia y modelo de distribución (ACEPTADA, con advertencias)
 
 **Decisión:**
-- Kernel, shell, utilidades y el resto del sistema base: **GPLv3**.
-- **`sys-libc`, `lix-sys` y las cabeceras**: **GPLv3 con excepción de enlace** (estilo *GCC Runtime Library Exception*) o **LGPLv3 + enlace estático permitido**. Se decide cuál antes del primer release público.
+- Kernel, shell, utilidades y el resto del sistema base: **GPLv2**.
+- **`sys-libc`, `lix-sys` y las cabeceras**: **GPLv2 con excepción de enlace** (estilo *GCC Runtime Library Exception*) o **LGPLv2 + enlace estático permitido**. Se decide cuál antes del primer release público.
 - Se añade una **excepción explícita de syscalls** (como la de Linux): los programas de usuario que solo usan la interfaz de syscalls no quedan sujetos a GPL.
 - El proyecto es **de desarrollo cerrado en control** (un único mantenedor decide diseño, componentes y ABI), pero con **código abierto**. No hay "distros" oficiales: LixOS es un producto integrado con un conjunto fijo de componentes. Marca y nombre quedan reservados.
 
 **Justificación y advertencias:**
-1. **Enlace estático + libc GPLv3 pura = todo programa compilado para Lix sería GPLv3.** Como v1.0 solo enlaza estático (ADR-06), esto es un problema real. Por eso la libc necesita una excepción; es el punto central de este ADR.
-2. GPLv3 incluye la cláusula **anti-tivoización** (sección 6): si exiges firmas criptográficas para módulos o paquetes (el diseño original lo pide), el **dueño del equipo debe poder instalar su propia clave o desactivar la verificación** en dispositivos de consumo. En un PC es fácil de cumplir: la clave raíz de confianza debe ser configurable por el usuario.
-3. GPLv3 no impide un modelo "cerrado como Windows" en el sentido de **control del diseño**, pero **sí impide** impedir que otros hagan forks. No se puede prohibir redistribuir ni modificar. Lo que sí se puede controlar es la **marca**.
-4. Los drivers propietarios de terceros en Ring 0 son legalmente conflictivos con GPLv3. Esto refuerza el ADR-11: los drivers de terceros serán de **userspace**, que no tienen ese problema.
+1. **Enlace estático + libc GPLv2 pura = todo programa compilado para Lix sería GPLv2.** Como v1.0 solo enlaza estático (ADR-06), esto es un problema real. Por eso la libc necesita una excepción; es el punto central de este ADR.
+2. GPLv2 incluye la cláusula **anti-tivoización** (sección 6): si exiges firmas criptográficas para módulos o paquetes (el diseño original lo pide), el **dueño del equipo debe poder instalar su propia clave o desactivar la verificación** en dispositivos de consumo. En un PC es fácil de cumplir: la clave raíz de confianza debe ser configurable por el usuario.
+3. GPLv2 no impide un modelo "cerrado como Windows" en el sentido de **control del diseño**, pero **sí impide** impedir que otros hagan forks. No se puede prohibir redistribuir ni modificar. Lo que sí se puede controlar es la **marca**.
+4. Los drivers propietarios de terceros en Ring 0 son legalmente conflictivos con GPLv2. Esto refuerza el ADR-11: los drivers de terceros serán de **userspace**, que no tienen ese problema.
 5. Esto no es asesoría legal. Antes del primer release conviene una revisión de un abogado.
 
 **Consecuencias:** cada crate lleva `SPDX-License-Identifier` en cada archivo. Se añade `LICENSE`, `COPYING.EXCEPTIONS` y una política de marca (`TRADEMARK.md`).
@@ -412,6 +412,16 @@ Diseño completo en [capabilities](../spec/capabilities.md).
 - Preserva la jerarquía **Estabilidad > Rendimiento > Escalabilidad**: si el entorno gráfico o el driver 3D colapsan, el kernel no entra en pánico y la sesión se recupera sin pérdida de datos.
 - Permite que el sistema operativo funcione en hardware virtualizado estándar (`virtio-gpu`) y equipos sin controladores 3D propietarios.
 
+## ADR-26: Conectividad integrada por etapas (ACEPTADA)
+
+**Decisión:** Se amplía el alcance de conectividad previsto en ADR-12 con una entrega progresiva: xHCI como primer bus USB; virtio-net como adaptador de red reproducible en QEMU; Bluetooth HID para teclado/ratón; y soporte Wi‑Fi por familias de chipsets con una matriz pública de modelos y firmware. La primera ruta de red usable debe incluir IPv4, ARP, DHCP, DNS, UDP y TCP.
+
+**Arquitectura:** Los drivers incluidos siguen siendo internos al kernel monolítico (ADR-01). Los parsers y protocolos independientes del hardware se mantienen en crates `no_std` host-testables. Drivers externos en userspace siguen dependiendo de las capabilities de MMIO, DMA e IRQ de ADR-11, aún no implementadas.
+
+**Justificación:** QEMU aporta una ruta repetible para validar controladores y protocolos, mientras la compatibilidad física puede crecer sin prometer un driver universal inexistente para Wi‑Fi.
+
+**Consecuencias:** ADR-12 queda reemplazada en cuanto al alcance de conectividad. Audio Bluetooth y BLE GATT no forman parte del primer hito. La arquitectura y el estado observado se mantienen en [Conectividad](../design/connectivity.md).
+
 ---
 
 ## Decisiones diferidas
@@ -436,21 +446,21 @@ Comportamiento observado en el árbol de fuentes. Las secciones siguientes descr
 
 | ADR | Estado | Evidencia |
 | --- | --- | --- |
-| ADR-01 | en uso | drivers en `kernel/src/drivers/`, todo en Ring 0 |
+| ADR-01 | parcial | drivers en `kernel/src/drivers/`, todo en Ring 0; xHCI implementa enumeración/HID boot y polling de conexión/desconexión en puertos raíz, aún sin validación ni hubs |
 | ADR-02 | parcial | hay planificación y preempción; **no hay executor `async` ni tipos `Future` en el kernel** |
-| ADR-03 | en uso | `syscall_dispatcher` y `init_syscall_msrs` (`kernel/src/task/syscall.rs`); vía primaria `SYSCALL`, secundaria `int 0x80` ([syscall-abi.md](../spec/syscall-abi.md) §10.2) |
+| ADR-03 | en uso | `syscall_dispatcher` y `init_syscall_msrs` (`kernel/src/task/syscall/mod.rs`); vía primaria `SYSCALL`, secundaria `int 0x80` ([syscall-abi.md](../spec/syscall-abi.md) §1) |
 | ADR-04 | en uso | `sys_process_spawn` (`0x100`); no existe `fork` |
 | ADR-05 | en uso | `HandleTable` con `slots` + `generations`, `Handle { index, generation }` y `Rights` (`kernel/src/task/handle.rs`) |
 | ADR-06 | parcial | `libs/sys-libc` expone 18 envoltorios `sys_*`; sin API POSIX ni `errno` ([libc-compat.md](../spec/libc-compat.md) §5) |
 | ADR-07 | en uso | peticiones Limine en `kernel/src/main.rs` ([boot.md](../design/boot.md) §1) |
 | ADR-08 | parcial | `kernel/src/drivers/{nvme,gpt,block}.rs` + `libs/lix-storage`: NVMe/GPT 512 B y 4 KiB; ext4 por partición solo lectura + overlay RAM, sin journaling/writeback ([storage.md](../design/storage.md) §3–§6) |
 | ADR-09 | sin implementar | no hay LZ4, ZRAM, contabilidad de commit ni OOM killer; sí hay contadores de uso de PMM y de E/S expuestos por `sys_monitor_metrics` ([memory-management.md](../design/memory-management.md) §9.5) |
-| ADR-10 | sin implementar | `services/authd/src/main.rs` tiene 2 líneas |
+| ADR-10 | parcial | Argon2id y cifrado AEAD están implementados como núcleo en `services/authd`; faltan RNG, persistencia, rate-limit, arranque y grants integrados ([security-auth.md](../design/security-auth.md)) |
 | ADR-11 | en uso | no hay infraestructura de módulos en el árbol |
-| ADR-12 | en uso | no hay código de red |
+| ADR-12 / ADR-26 | parcial | QEMU virtio-net obtiene DHCP; xHCI aún falla en GET_DESCRIPTOR de teclado USB. `lix-wifi`/`lix-bluetooth` aportan parsers, pero faltan drivers de radio/HCI, supplicant, pairing, sockets e integración en servicios ([connectivity.md](../design/connectivity.md)) |
 | ADR-13 | en uso | `kernel/src/klog/`, `kernel/src/panic.rs`, `force-frame-pointers=yes` en `KERNEL_RUSTFLAGS` ([console.md](../design/console.md) §3–§4) |
 | ADR-14 | sin instrumentación | no hay medición de latencia de `SYSCALL` ni tests de `unsafe` |
-| ADR-15 / ADR-25 | sin implementar | no existe el módulo `lix-drm` ni ningún DRM/KMS; `services/lix-compositor` y `userland/lix-shell` son *stubs* de 2 líneas ([graphics.md](../design/graphics.md) §8) |
+| ADR-15 / ADR-25 | sin implementar | no existe el módulo `lix-drm` ni ningún DRM/KMS; `services/lix-compositor` sigue siendo un *stub* y los crates `userland/lix-shell` y `libs/lix-ui` fueron retirados del árbol ([graphics.md](../design/graphics.md) §8) |
 | ADR-16 | decisión de política | no afecta al código |
 | ADR-17 | parcial | `sys_abi_version` devuelve `0x00000001`; `abi/syscalls.toml` declara `0.1.0`; el workspace declara `0.0.1` |
 | ADR-18 | en uso | `xtask iso` genera `target/lixos.iso` y el initrd se carga como módulo ([boot.md](../design/boot.md) §3) |
@@ -458,8 +468,8 @@ Comportamiento observado en el árbol de fuentes. Las secciones siguientes descr
 | ADR-20 | en consolidación | MLFQ $O(1)$ de 32 prioridades con `PerCpuArea`, `GS_BASE`, colas por CPU y arquitectura multinúcleo SMP documentada ([process-scheduler.md](../design/process-scheduler.md) §8–§9) |
 | ADR-21 | parcial | `lix-storage` comparte validación GPT; `lix-installer` inspecciona imágenes y calcula planes de solo lectura, pero no aplica cambios, no tiene diario/rollback, FAT32 ni registro UEFI ([installer.md](../design/installer.md) §9) |
 | ADR-22 | sin implementar | sin `ports/`, sin `compat/`, sin toolchain `x86_64-lix` ([porting-compat.md](../spec/porting-compat.md) §11) |
-| ADR-23 | sin implementar | no hay código de namespaces; los privilegios son el campo `privilege_level` con los prefijos `sudo` y `su0` de la shell |
-| ADR-24 | parcial | `abi/syscalls.toml` existe con 12 entradas y **sin generador**; la tabla del kernel y `lix-sys` están escritas a mano ([syscall-abi.md](../spec/syscall-abi.md) §10.6) |
+| ADR-23 | parcial | no hay namespaces ni capabilities raíz/bootstrap; ELF queda forzado a Ring 3/IOPL 0. `sudo`, `vdo` y `su0` fallan cerrados mientras authd no implemente grants; ver `docs/design/security-auth.md` |
+| ADR-24 | en uso | `abi/syscalls.toml` (35 entradas) es la fuente única; `cargo xtask codegen` genera `kernel/src/task/syscall_table.rs`, `include/lix/syscall.h` y `libs/lix-sys/src/syscalls.rs` (antes escrito a mano). La documentación del ABI y el fuzzer de la decisión siguen **sin** generarse: la tabla de [syscall-abi.md](../spec/syscall-abi.md) se mantiene a mano y debe regenerarse desde el TOML; el job `codegen-drift` de CI falla ante deriva |
 
 ### Observaciones sobre la §2 y la §10
 
